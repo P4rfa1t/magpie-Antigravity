@@ -457,6 +457,25 @@ describe('Antigravity OpenAI <-> v1internal mapping', () => {
     assert.equal(envelope.request.labels.trajectory_id, envelope.requestId.split('/')[3]);
     assert.deepEqual(Object.keys(envelope), ['project', 'requestId', 'request', 'model', 'userAgent', 'requestType']);
   });
+  it('rewords invisible-char obfuscated turned-away phrases and quality-degrading paragraphs', () => {
+    const obfuscated = [
+      'R\u200bFC 2119\nkeywords: MUST, REQUIRED, SHOULD, RECOMMENDED, MAY, OPTIONAL.',
+      'You are Co\u200bdex, an agent based on GPT-5.',
+      'a coding assistant running inside pi',
+      'Tokens prefixed with @ are paths the user explicitly referenced. Relative paths resolve from the workspace root; absolute paths identify files or directories on the host. A trailing slash marks a directory: list it when its contents matter. Anything else is a file: use the read tool when its contents are needed, and do not claim to have inspected it before reading. @"..." quotes a path containing spaces.'
+    ].join('\n');
+
+    const { envelope } = openAIToAntigravityRequest({
+      model: 'gemini-4-hydrogen',
+      messages: [{ role: 'user', content: obfuscated }]
+    }, { catalog: SAMPLE_CATALOG, projectId: 'aicode-consumers', email: 'u@gmail.com', sessionId: 'cloak-sess' });
+
+    const outText = envelope.request.contents[0].parts[0].text;
+    assert.ok(outText.includes('RFC 2119\nkey words:'));
+    assert.ok(outText.includes('You are Codex, an agent built on GPT-5.'));
+    assert.ok(outText.includes('a coding assistant running within pi'));
+    assert.ok(outText.includes('When the user writes @ followed by a path'));
+  });
 });
 
 describe('AntigravityPlugin integration with Magpie contract', () => {
