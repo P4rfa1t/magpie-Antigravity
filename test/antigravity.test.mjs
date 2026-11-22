@@ -15,12 +15,14 @@ import {
   verifyRefreshToken
 } from '../lib/antigravity-oauth.mjs';
 import {
+  OFFICIAL_ANTIGRAVITY_IDENTITY,
   SENTINEL_SIGNATURE,
   antigravitySSEToOpenAIStream,
   antigravityToOpenAIResponse,
   cleanJsonSchema,
   openAIToAntigravityRequest,
-  resolveAntigravityModel
+  resolveAntigravityModel,
+  sanitizeSystemPrompt
 } from '../lib/antigravity-mapper.mjs';
 import {
   ANTIGRAVITY_BASE,
@@ -369,6 +371,23 @@ describe('Antigravity OpenAI <-> v1internal mapping', () => {
     assert.match(outText, /"finish_reason":"stop"/);
     assert.match(outText, /"reasoning_tokens":1/);
     assert.match(outText, /data: \[DONE\]\n\n$/);
+  });
+
+  it('normalizes third-party client identities and strips billing headers while preserving code blocks', () => {
+    const raw = [
+      'x-anthropic-billing-header: cc_version=2.1; cch=abc',
+      'You are Claude Code, Anthropic\'s official CLI for Claude, running within the Claude Agent SDK.',
+      'You are a Claude agent, built on Anthropic\'s Claude Agent SDK.',
+      'Keep example: `You are Claude Code` and:',
+      '```text',
+      'You are Claude, created by Anthropic.',
+      '```'
+    ].join('\n');
+    const cleaned = sanitizeSystemPrompt(raw);
+    assert.ok(!cleaned.includes('x-anthropic-billing-header'));
+    assert.ok(cleaned.startsWith(OFFICIAL_ANTIGRAVITY_IDENTITY));
+    assert.ok(cleaned.includes('`You are Claude Code`'));
+    assert.ok(cleaned.includes('You are Claude, created by Anthropic.'));
   });
 });
 
