@@ -460,10 +460,12 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     const usageCard = await plugin.auth.usage(async () => authObj);
     assert.equal(usageCard.plan, 'PRO');
     assert.equal(usageCard.windows.length, 3);
-    assert.equal(usageCard.windows[0].name, 'Gemini 5h');
-    assert.equal(usageCard.windows[0].used, 10);
-    assert.equal(usageCard.windows[2].name, 'Claude/GPT 5h');
-    assert.equal(usageCard.windows[2].used, 100);
+    assert.equal(usageCard.windows[0].name, 'Gemini 7d');
+    assert.equal(usageCard.windows[0].used, 20);
+    assert.equal(usageCard.windows[1].name, 'Claude 5h');
+    assert.equal(usageCard.windows[1].used, 100);
+    assert.equal(usageCard.windows[2].name, 'Gemini 5h');
+    assert.equal(usageCard.windows[2].used, 10);
 
     const loader = await plugin.auth.loader(async () => authObj);
     assert.equal(loader.baseURL, ANTIGRAVITY_BASE);
