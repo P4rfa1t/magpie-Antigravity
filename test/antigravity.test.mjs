@@ -228,7 +228,7 @@ describe('Antigravity model catalog & schema cleaning', () => {
 
     assert.ok(models['claude-opus-5-5']);
     assert.deepEqual(Object.keys(models['claude-opus-5-5'].variants), ['low', 'high']);
-    assert.equal(models['claude-opus-5-5'].limit.context, 200000);
+    assert.equal(models['claude-opus-5-5'].limit.context, 1000000);
 
     assert.ok(models['gpt-oss-120b-medium']);
     assert.equal(models['gemini-3.1-flash-image'].api.npm, '@ai-sdk/google');
