@@ -482,7 +482,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     assert.equal(usageCard.windows[0].name, 'Gemini 7d');
     assert.equal(usageCard.windows[0].used, 20);
     assert.equal(usageCard.windows[1].name, 'Claude 5h');
-    assert.equal(usageCard.windows[1].used, 100);
+    assert.equal(usageCard.windows[1].used, 99);
     assert.equal(usageCard.windows[2].name, 'Gemini 5h');
     assert.equal(usageCard.windows[2].used, 10);
 
@@ -591,5 +591,95 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     assert.equal(errRes.headers.get('retry-after'), '60');
     const errJson = await errRes.json();
     assert.equal(errJson.error.type, 'rate_limit_error');
+  });
+
+  it('prevents partial family quota exhaustion from locking the whole account', async () => {
+    const dir = makeTempDir();
+    let claudeRemaining = 0;
+    let geminiRemaining = 0.56;
+    const fetchFn = async (url, init) => {
+      if (url.includes('oauth2.googleapis.com/token')) return Response.json({ access_token: 'tok', expires_in: 3600 });
+      if (url.includes('/userinfo')) return Response.json({ email: 'partial@gmail.com' });
+      if (url.includes(':loadCodeAssist')) return Response.json({ cloudaicompanionProject: 'aicode-consumers' });
+      if (url.includes(':fetchAvailableModels')) {
+        return Response.json(SAMPLE_CATALOG);
+      }
+      if (url.includes(':retrieveUserQuotaSummary')) {
+        return Response.json({
+          groups: [
+            {
+              displayName: 'Gemini Models',
+              buckets: [
+                { window: '5h', remainingFraction: geminiRemaining, resetTime: '2026-11-22T20:17:31Z' }
+              ]
+            },
+            {
+              displayName: 'Claude and GPT models',
+              buckets: [
+                { window: '5h', remainingFraction: claudeRemaining, resetTime: '2026-11-22T20:24:40Z' }
+              ]
+            }
+          ]
+        });
+      }
+      if (url.includes(':generateContent')) {
+        const body = JSON.parse(init.body);
+        if (String(body.model).includes('claude')) {
+          return Response.json({
+            error: {
+              code: 429,
+              message: 'Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 3h0m35s.',
+              status: 'RESOURCE_EXHAUSTED'
+            }
+          }, { status: 429 });
+        }
+        return Response.json({
+          response: { candidates: [{ content: { parts: [{ text: 'gemini ok' }] }, finishReason: 'STOP' }] }
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const plugin = await AntigravityPlugin({}, {
+      antigravity: { dataDir: dir, clientId: 'cid', clientSecret: 'csec' },
+      rateLimitBackoffMs: 5,
+      rateLimitRetries: 1,
+      fetchFn
+    });
+    const flow = await plugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const signIn = await flow.callback('1//03partial');
+    const auth = { type: 'api', key: signIn.key, metadata: signIn.metadata };
+
+    // Claude at 0% remaining while Gemini has 56% remaining -> Claude 5h is capped at 99% used.
+    const partialUsage = await plugin.auth.usage(async () => auth);
+    const geminiWin = partialUsage.windows.find(w => w.name === 'Gemini 5h');
+    const claudeWin = partialUsage.windows.find(w => w.name === 'Claude 5h');
+    assert.equal(geminiWin.used, 44);
+    assert.equal(claudeWin.used, 99);
+
+    // When all pools are exhausted (0% remaining everywhere), used: 100 is preserved.
+    geminiRemaining = 0;
+    const allOutUsage = await plugin.auth.usage(async () => auth);
+    assert.equal(allOutUsage.windows.every(w => w.used === 100), true);
+
+    const loader = await plugin.auth.loader(async () => auth);
+    // Long per-family quota exhaustion returns HTTP 400 so Magpie does not freeze unrelated pools.
+    const claudeRes = await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-5-5', messages: [{ role: 'user', content: 'hi' }] })
+    });
+    assert.equal(claudeRes.status, 400);
+    const claudeErr = await claudeRes.json();
+    assert.match(claudeErr.error.message, /配额池已用尽/);
+
+    // Gemini requests continue to succeed immediately.
+    const geminiRes = await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-neon', messages: [{ role: 'user', content: 'hi' }] })
+    });
+    assert.equal(geminiRes.status, 200);
+    assert.equal((await geminiRes.json()).choices[0].message.content, 'gemini ok');
   });
 });
