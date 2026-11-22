@@ -513,4 +513,64 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     // Subsequent login skips clientId prompt because oauth-clients.json was saved.
     assert.equal(await method.ask({ clientType: 'personal', proxy: '' }), null);
   });
+
+  it('retries transient 429 with short delay and preserves primary 429 over sandbox 400', async () => {
+    const dir = makeTempDir();
+    let genCalls = 0;
+    let mode = 'recover';
+    const fetchFn = async url => {
+      if (url.includes('oauth2.googleapis.com/token')) return Response.json({ access_token: 'tok', expires_in: 3600 });
+      if (url.includes('/userinfo')) return Response.json({ email: 'retry@gmail.com' });
+      if (url.includes(':loadCodeAssist')) return Response.json({ cloudaicompanionProject: 'aicode-consumers' });
+      if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+      if (url.includes(':generateContent')) {
+        genCalls++;
+        if (mode === 'recover' && genCalls <= 2) {
+          return Response.json({ error: { code: 429, details: [{ retryDelay: '0.01s' }] } }, { status: 429 });
+        }
+        if (mode === 'preserve429') {
+          if (url.includes('sandbox.googleapis.com')) {
+            return Response.json({ error: { code: 400, message: 'User location is not supported' } }, { status: 400 });
+          }
+          return Response.json({ error: { code: 429, message: 'RESOURCE_EXHAUSTED' } }, {
+            status: 429,
+            headers: { 'Retry-After': '60' }
+          });
+        }
+        return Response.json({
+          response: { candidates: [{ content: { parts: [{ text: 'recovered' }] }, finishReason: 'STOP' }] }
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const plugin = await AntigravityPlugin({}, {
+      antigravity: { dataDir: dir, clientId: 'cid', clientSecret: 'csec' },
+      rateLimitBackoffMs: 5,
+      rateLimitRetries: 1,
+      fetchFn
+    });
+    const flow = await plugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const signIn = await flow.callback('1//03retry');
+    const loader = await plugin.auth.loader(async () => ({ type: 'api', key: signIn.key, metadata: signIn.metadata }));
+
+    const okRes = await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-hydrogen', messages: [{ role: 'user', content: 'hi' }] })
+    });
+    assert.equal(okRes.status, 200);
+    assert.equal((await okRes.json()).choices[0].message.content, 'recovered');
+
+    mode = 'preserve429';
+    const errRes = await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-hydrogen', messages: [{ role: 'user', content: 'hi' }] })
+    });
+    assert.equal(errRes.status, 429);
+    assert.equal(errRes.headers.get('retry-after'), '60');
+    const errJson = await errRes.json();
+    assert.equal(errJson.error.type, 'rate_limit_error');
+  });
 });
