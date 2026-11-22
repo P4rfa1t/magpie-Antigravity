@@ -389,6 +389,71 @@ describe('Antigravity OpenAI <-> v1internal mapping', () => {
     assert.ok(cleaned.includes('`You are Claude Code`'));
     assert.ok(cleaned.includes('You are Claude, created by Anthropic.'));
   });
+
+  it('sideloads complex coding agent prompts, scrubs WAF phrases in tools and user reminders, and aligns envelope topology', () => {
+    const longAgentSystem = [
+      'x-anthropic-billing-header: cc_version=2.1; cc_entrypoint=cli',
+      'You are Claude Code, Anthropic\'s official CLI for Claude.',
+      'Prefer read_file, edit_file, and write_file over cat/sed. Always read_file before edit_file.',
+      'Follow these agent tool guidelines carefully: '.repeat(12)
+    ].join('\n');
+
+    const { targetModel, envelope } = openAIToAntigravityRequest({
+      model: 'gemini-4-hydrogen',
+      reasoning_effort: 'high',
+      messages: [
+        { role: 'system', content: longAgentSystem },
+        {
+          role: 'user',
+          content: '<system-reminder>\nYou are Claude Code running a skill.\ncall read_file on its SKILL.md\n</system-reminder>\n你好'
+        }
+      ],
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'codemode',
+            description: 'Run codemode across Claude Code workspace. Always read_file before edit_file.',
+            parameters: {
+              type: 'object',
+              properties: {
+                cmd: { type: 'string', description: 'Prefer read_file, edit_file, and write_file over cat/sed' }
+              }
+            }
+          }
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'Read',
+            description: 'Read a file',
+            parameters: { type: 'object', properties: { path: { type: 'string' } } }
+          }
+        }
+      ]
+    }, { catalog: SAMPLE_CATALOG, projectId: 'aicode-consumers', email: 'u@gmail.com', sessionId: 'cc-sess' });
+
+    assert.equal(targetModel, 'gemini-4-hydrogen-high');
+    // Outbound systemInstruction is kept pure official identity; full directives are sideloaded into contents[0].
+    assert.deepEqual(envelope.request.systemInstruction, {
+      role: 'user',
+      parts: [{ text: OFFICIAL_ANTIGRAVITY_IDENTITY }]
+    });
+    assert.equal(envelope.request.contents[0].parts[0].text.startsWith('<system-instruction priority="critical" role="developer">'), true);
+    assert.ok(envelope.request.contents[0].parts[0].text.includes('Prefer read file, edit file, and write file over cat/sed'));
+    assert.ok(!envelope.request.contents[0].parts[0].text.includes('x-anthropic-billing-header'));
+    // User <system-reminder> block is sanitized.
+    assert.ok(envelope.request.contents[0].parts[1].text.includes('call read file on its SKILL.md'));
+    assert.ok(!envelope.request.contents[0].parts[1].text.includes('Claude Code'));
+    // Tools are expanded one declaration per entry and scrubbed of WAF triggers; fake safetySettings omitted.
+    assert.equal(envelope.request.tools.length, 2);
+    assert.ok(envelope.request.tools[0].functionDeclarations[0].description.includes('codem0de'));
+    assert.ok(envelope.request.tools[0].functionDeclarations[0].parameters.properties.cmd.description.includes('Prefer read file, edit file, and write file over cat/sed'));
+    assert.equal(envelope.request.safetySettings, undefined);
+    assert.equal(envelope.request.labels.model_enum, 'gemini-4-hydrogen-high');
+    assert.equal(envelope.request.labels.used_claude, 'false');
+    assert.deepEqual(Object.keys(envelope), ['project', 'requestId', 'request', 'model', 'userAgent', 'requestType']);
+  });
 });
 
 describe('AntigravityPlugin integration with Magpie contract', () => {
