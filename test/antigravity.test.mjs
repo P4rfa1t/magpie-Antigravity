@@ -565,13 +565,18 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
 
     const usageCard = await plugin.auth.usage(async () => authObj);
     assert.equal(usageCard.plan, 'PRO');
-    assert.equal(usageCard.windows.length, 3);
-    assert.equal(usageCard.windows[0].name, 'Gemini 7d');
-    assert.equal(usageCard.windows[0].used, 20);
-    assert.equal(usageCard.windows[1].name, 'Claude 5h');
-    assert.equal(usageCard.windows[1].used, 99);
-    assert.equal(usageCard.windows[2].name, 'Gemini 5h');
-    assert.equal(usageCard.windows[2].used, 10);
+    assert.equal(usageCard.windows.every(w => w.aside === true), true);
+    const modelWin = usageCard.windows.find(w => w.model === 'gemini-4-hydrogen');
+    assert.ok(modelWin);
+    assert.equal(modelWin.family, 'Gemini');
+    assert.equal(modelWin.pool, 'Gemini');
+    assert.equal(modelWin.used, 20);
+    const gemini7d = usageCard.windows.find(w => !w.model && w.pool === 'Gemini' && w.name === '7 days');
+    const gemini5h = usageCard.windows.find(w => !w.model && w.pool === 'Gemini' && w.name === '5 hours');
+    const claude5h = usageCard.windows.find(w => !w.model && w.pool === 'Claude & GPT' && w.name === '5 hours');
+    assert.equal(gemini7d.used, 20);
+    assert.equal(gemini5h.used, 10);
+    assert.equal(claude5h.used, 100);
 
     const loader = await plugin.auth.loader(async () => authObj);
     assert.equal(loader.baseURL, ANTIGRAVITY_BASE);
@@ -737,17 +742,34 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     const signIn = await flow.callback('1//03partial');
     const auth = { type: 'api', key: signIn.key, metadata: signIn.metadata };
 
-    // Claude at 0% remaining while Gemini has 56% remaining -> Claude 5h is capped at 99% used.
+    // All windows carry aside: true so Magpie displays true quota without locking out routing,
+    // and both per-model windows ("仅看用量") and pool windows are included.
     const partialUsage = await plugin.auth.usage(async () => auth);
-    const geminiWin = partialUsage.windows.find(w => w.name === 'Gemini 5h');
-    const claudeWin = partialUsage.windows.find(w => w.name === 'Claude 5h');
+    assert.equal(partialUsage.windows.every(w => w.aside === true), true);
+    const geminiWin = partialUsage.windows.find(w => !w.model && w.pool === 'Gemini' && w.name === '5 hours');
+    const claudeWin = partialUsage.windows.find(w => !w.model && w.pool === 'Claude & GPT' && w.name === '5 hours');
+    const hydrogenModelWin = partialUsage.windows.find(w => w.model === 'gemini-4-hydrogen');
     assert.equal(geminiWin.used, 44);
-    assert.equal(claudeWin.used, 99);
+    assert.equal(claudeWin.used, 100);
+    assert.equal(hydrogenModelWin.used, 44);
+    assert.equal(hydrogenModelWin.family, 'Gemini');
 
-    // When all pools are exhausted (0% remaining everywhere), used: 100 is preserved.
+    // When all pools are exhausted (0% remaining everywhere), used: 100 is preserved with aside: true.
     geminiRemaining = 0;
     const allOutUsage = await plugin.auth.usage(async () => auth);
-    assert.equal(allOutUsage.windows.every(w => w.used === 100), true);
+    assert.equal(allOutUsage.windows.every(w => w.used === 100 && w.aside === true), true);
+
+    // auth.import supports retired Antigravity plugin entries and agy go-keyring-base64 files.
+    const keyringPayload = 'go-keyring-base64:' + Buffer.from(JSON.stringify({
+      token: { refresh_token: '1//03keyring' },
+      id_token_email: 'keyring@gmail.com'
+    })).toString('base64');
+    const imported = await plugin.auth.import([
+      JSON.stringify({ type: 'oauth', refresh: '1//03legacy|aicode-consumers', accountId: 'legacy@gmail.com' }),
+      keyringPayload
+    ]);
+    assert.equal(imported.length, 2);
+    assert.equal(imported.every(r => r.type === 'success'), true);
 
     const loader = await plugin.auth.loader(async () => auth);
     // Long per-family quota exhaustion returns HTTP 400 so Magpie does not freeze unrelated pools.
