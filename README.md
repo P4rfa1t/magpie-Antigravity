@@ -12,7 +12,7 @@
 
 插件提供三个互相独立的 Provider，可按使用场景选择（也可同时配置）：
 
-| 对比项 | Antigravity (`antigravity`) | Google AI Studio (`ai-studio`) | Gemini Web (`gemini-web`) |
+| 对比项 | Antigravity (`antigravity-rt`) | Google AI Studio (`ai-studio`) | Gemini Web (`gemini-web`) |
 | :--- | :--- | :--- | :--- |
 | **适用场景** | **免本地二进制，OAuth Refresh Token 直连（含 Claude / Gemini 4）** | **推荐主力与 Coding Agent 使用** | 日常对话、使用网页版额度 |
 | **主要模型** | `gemini-4-neon`、`gemini-4-hydrogen`、`gemini-4-argon`、`gemini-3.8-flash`、`claude-opus-5-5`、`claude-sonnet-5-5`、`gpt-oss-120b-medium` | `gemini-4-carbon`（Ultra 等有权益账号）、`gemini-4-hydrogen`、`gemini-4-argon`、`gemini-3.1-pro`、Flash 系列、Deep Research | `gemini-4-hydrogen`（登录账号，含免费）、`gemini-4-carbon`（付费 / Ultra）、`gemini-4-neon`（付费 / Ultra）、`gemini-3.6-flash`、`gemini-3.5-flash-lite` |
@@ -30,9 +30,9 @@
 
 在 Magpie 插件市场（或通过本地路径 `magpie plugin add <目录>`）安装 **magpie-gemini-web** 后，按需登录以下任一 Provider。
 
-### 方式零：Antigravity (`antigravity` — Refresh Token 登录)
+### 方式零：Antigravity (RT) (`antigravity-rt` — Refresh Token 登录)
 
-1. 在 Magpie 中登录 **Antigravity**，选择 **「通过 Refresh Token 登录（支持批量）」**。
+1. 在 Magpie 的 **「来自插件」** 区域找到 **Antigravity (RT)**（独立于 Magpie 内置的订阅 `Antigravity`，避免冲突），选择 **「通过 Refresh Token 登录（支持批量）」**。
 2. 选择账号类型：**个人账号 (Personal)**（常规 Gmail 账号）或 **企业 / GCP (Vertex AI)**，按需填写访问 Google 的代理地址（也可通过环境变量 `ANTIGRAVITY_PROXY` 或插件选项 `antigravity.proxy` 设置）。
 3. 仓库内不硬编码 Google OAuth 客户端凭据。首次使用需通过以下任一方式提供与你的 Refresh Token 匹配的 `client_id` 与 `client_secret`（如 `Antigravity-Manager` 的 `oauth.rs` 中对应的客户端，或自建 Google Cloud OAuth 客户端）：
    - 登录交互提示中直接填写（验证通过后会自动保存到 `~/.local/share/magpie-antigravity/oauth-clients.json`，下次无需再填）；

@@ -441,7 +441,8 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     });
     const cfg = {};
     await plugin.config(cfg);
-    assert.equal(cfg.provider[ANTIGRAVITY_ID].name, 'Antigravity');
+    assert.equal(cfg.provider[ANTIGRAVITY_ID].name, 'Antigravity (RT)');
+    assert.equal(ANTIGRAVITY_ID, 'antigravity-rt');
 
     const flow = await plugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
     assert.equal(flow.method, 'code');

@@ -12,7 +12,7 @@ Use **Google AI Studio** and **Gemini on the web** through your Google account i
 
 The plugin provides three independent providers that can be used individually or together:
 
-| Feature | Antigravity (`antigravity`) | Google AI Studio (`ai-studio`) | Gemini Web (`gemini-web`) |
+| Feature | Antigravity (`antigravity-rt`) | Google AI Studio (`ai-studio`) | Gemini Web (`gemini-web`) |
 | :--- | :--- | :--- | :--- |
 | **Best for** | **Zero-binary direct OAuth Refresh Token access (Gemini 4 & Claude)** | **Primary use & coding agents (recommended)** | General chat & web quota |
 | **Key models** | `gemini-4-neon`, `gemini-4-hydrogen`, `gemini-4-argon`, `gemini-3.8-flash`, `claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-oss-120b-medium` | `gemini-4-carbon` (Ultra / eligible accounts), `gemini-4-hydrogen`, `gemini-4-argon`, `gemini-3.1-pro`, Flash series, Deep Research | `gemini-4-hydrogen` (signed-in, including free accounts), `gemini-4-carbon` (paid/Ultra), `gemini-4-neon` (paid/Ultra), `gemini-3.6-flash`, `gemini-3.5-flash-lite` |
@@ -30,9 +30,9 @@ The plugin provides three independent providers that can be used individually or
 
 Install **magpie-gemini-web** from the Magpie plugin market (or via `magpie plugin add <path>`), then sign in to any of the providers below.
 
-### Option 0: Antigravity (`antigravity` — Refresh Token Sign-in)
+### Option 0: Antigravity (RT) (`antigravity-rt` — Refresh Token Sign-in)
 
-1. Sign in to **Antigravity** in Magpie and choose **「通过 Refresh Token 登录（支持批量）」** (Sign in with Refresh Token).
+1. Under **From plugins** in Magpie, sign in to **Antigravity (RT)** (uses a dedicated ID so it does not collide with Magpie's built-in `Antigravity` subscription) and choose **「通过 Refresh Token 登录（支持批量）」** (Sign in with Refresh Token).
 2. Choose account type (**Personal** for standard Gmail accounts, or **Enterprise / GCP (Vertex AI)**) and optionally enter a proxy URL (also configurable via `ANTIGRAVITY_PROXY` or plugin option `antigravity.proxy`).
 3. Google OAuth client credentials are not hardcoded in the repository. On first use, provide the matching `client_id` and `client_secret` for your Refresh Token (e.g., from `Antigravity-Manager` `oauth.rs` or your Google Cloud OAuth app) using any of:
    - Enter them in the sign-in prompts (saved locally to `~/.local/share/magpie-antigravity/oauth-clients.json` after verification);
