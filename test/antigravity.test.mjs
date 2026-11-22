@@ -682,4 +682,54 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     assert.equal(geminiRes.status, 200);
     assert.equal((await geminiRes.json()).choices[0].message.content, 'gemini ok');
   });
+
+  it('skips redundant sandbox re-uploads on large-body transient 429 retries', async () => {
+    const dir = makeTempDir();
+    const hitUrls = [];
+    let primaryAttempts = 0;
+    const fetchFn = async url => {
+      if (url.includes('oauth2.googleapis.com/token')) return Response.json({ access_token: 'tok', expires_in: 3600 });
+      if (url.includes('/userinfo')) return Response.json({ email: 'large429@gmail.com' });
+      if (url.includes(':loadCodeAssist')) return Response.json({ cloudaicompanionProject: 'aicode-consumers' });
+      if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+      if (url.includes(':generateContent')) {
+        hitUrls.push(url);
+        primaryAttempts++;
+        if (primaryAttempts === 1) {
+          return Response.json({
+            error: {
+              code: 429,
+              message: 'Resource has been exhausted (e.g. check quota).',
+              status: 'RESOURCE_EXHAUSTED'
+            }
+          }, { status: 429 });
+        }
+        return Response.json({
+          response: { candidates: [{ content: { parts: [{ text: 'large recovered' }] }, finishReason: 'STOP' }] }
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const plugin = await AntigravityPlugin({}, {
+      antigravity: { dataDir: dir, clientId: 'cid', clientSecret: 'csec' },
+      rateLimitBackoffMs: 5,
+      rateLimitRetries: 2,
+      fetchFn
+    });
+    const flow = await plugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const signIn = await flow.callback('1//03large');
+    const loader = await plugin.auth.loader(async () => ({ type: 'api', key: signIn.key, metadata: signIn.metadata }));
+
+    const bigText = 'x'.repeat(600 * 1024);
+    const res = await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-hydrogen', messages: [{ role: 'user', content: bigText }] })
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).choices[0].message.content, 'large recovered');
+    assert.equal(hitUrls.some(u => u.includes('sandbox.googleapis.com')), false);
+    assert.equal(hitUrls.length, 2);
+  });
 });
