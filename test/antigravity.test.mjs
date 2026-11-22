@@ -50,6 +50,7 @@ const SAMPLE_CATALOG = {
       maxOutputTokens: 262144
     },
     'gemini-4-hydrogen-high': {
+      model: 'MODEL_PLACEHOLDER_M522',
       displayName: 'Gemini 4 Hydrogen (High)',
       modelProvider: 'MODEL_PROVIDER_GOOGLE',
       thinkingLevel: 3,
@@ -450,8 +451,10 @@ describe('Antigravity OpenAI <-> v1internal mapping', () => {
     assert.ok(envelope.request.tools[0].functionDeclarations[0].description.includes('codem0de'));
     assert.ok(envelope.request.tools[0].functionDeclarations[0].parameters.properties.cmd.description.includes('Prefer read file, edit file, and write file over cat/sed'));
     assert.equal(envelope.request.safetySettings, undefined);
-    assert.equal(envelope.request.labels.model_enum, 'gemini-4-hydrogen-high');
+    assert.equal(envelope.request.labels.model_enum, 'MODEL_PLACEHOLDER_M522');
     assert.equal(envelope.request.labels.used_claude, 'false');
+    assert.match(envelope.requestId, /^agent\/[0-9a-f-]{36}\/\d+\/[0-9a-f-]{36}\/\d+$/);
+    assert.equal(envelope.request.labels.trajectory_id, envelope.requestId.split('/')[3]);
     assert.deepEqual(Object.keys(envelope), ['project', 'requestId', 'request', 'model', 'userAgent', 'requestType']);
   });
 });
