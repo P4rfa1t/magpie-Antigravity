@@ -83,7 +83,7 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
   if (!options || typeof options !== 'object' || Array.isArray(options)) {
     settings(options);
   }
-  const { studio: _studio, ...webOptions } = options;
+  const { studio: _studio, antigravity: _antigravity, ...webOptions } = options;
   const opts = settings(webOptions);
   registerMagpieCleanup(_input);
   const inContainer = isContainerEnv();
@@ -288,4 +288,5 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
 };
 
 export { AIStudioPlugin } from './lib/studio.mjs';
+export { AntigravityPlugin } from './lib/antigravity.mjs';
 export default GeminiWebPlugin;

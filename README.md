@@ -10,25 +10,42 @@
 
 ## 怎么选？
 
-插件提供两个互相独立的 Provider，可按使用场景选择（也可同时配置）：
+插件提供三个互相独立的 Provider，可按使用场景选择（也可同时配置）：
 
-| 对比项 | Google AI Studio (`ai-studio`) | Gemini Web (`gemini-web`) |
-| :--- | :--- | :--- |
-| **适用场景** | **推荐主力与 Coding Agent 使用** | 日常对话、使用网页版额度 |
-| **主要模型** | `gemini-4-carbon`（Ultra 等有权益账号）、`gemini-4-hydrogen`、`gemini-4-argon`、`gemini-3.1-pro`、Flash 系列、Deep Research | `gemini-4-hydrogen`（登录账号，含免费）、`gemini-4-carbon`（付费 / Ultra）、`gemini-4-neon`（付费 / Ultra）、`gemini-3.6-flash`、`gemini-3.5-flash-lite` |
-| **工具调用** | **原生 Function Calling**，稳定可靠 | 提示词模拟（实验性，Flash 系列常不调工具） |
-| **思考档位** | 按模型目录提供 `minimal` / `low` / `medium` / `high` / `xhigh`（Hydrogen）中支持的档位 | `low`（普通）/ `medium`（`-thinking-medium`，仅 `gemini-4-argon`）/ `high`（`-thinking` 扩展思考） |
-| **图片输入** | 默认开启，对话模型可以读图 | 默认开启，对话模型可以读图（需登录态挂 Cookie） |
-| **图片生成** | Nano Banana 系列模型，供 Magpie 的图片生成使用（需要 Magpie v0.1.2075+，见下文） | 不支持 |
-| **登录方式** | 自动安装官方后端，导入账号后确认连接 | 用无痕窗口登录并复制 `cookie` |
-| **额度卡片** | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
-| **本地后端** | AIStudio2API（自动安装并跟随官方稳定版） | gemini-web2api-go (`4.31.0-magpie.2` 优化版) |
+| 对比项 | Antigravity (`antigravity`) | Google AI Studio (`ai-studio`) | Gemini Web (`gemini-web`) |
+| :--- | :--- | :--- | :--- |
+| **适用场景** | **免本地二进制，OAuth Refresh Token 直连（含 Claude / Gemini 4）** | **推荐主力与 Coding Agent 使用** | 日常对话、使用网页版额度 |
+| **主要模型** | `gemini-4-neon`、`gemini-4-hydrogen`、`gemini-4-argon`、`gemini-3.8-flash`、`claude-opus-5-5`、`claude-sonnet-5-5`、`gpt-oss-120b-medium` | `gemini-4-carbon`（Ultra 等有权益账号）、`gemini-4-hydrogen`、`gemini-4-argon`、`gemini-3.1-pro`、Flash 系列、Deep Research | `gemini-4-hydrogen`（登录账号，含免费）、`gemini-4-carbon`（付费 / Ultra）、`gemini-4-neon`（付费 / Ultra）、`gemini-3.6-flash`、`gemini-3.5-flash-lite` |
+| **工具调用** | **原生 Function Calling** | **原生 Function Calling**，稳定可靠 | 提示词模拟（实验性，Flash 系列常不调工具） |
+| **思考档位** | `low` / `medium` / `high` / `xhigh` | 按模型目录提供 `minimal` / `low` / `medium` / `high` / `xhigh`（Hydrogen）中支持的档位 | `low`（普通）/ `medium`（`-thinking-medium`，仅 `gemini-4-argon`）/ `high`（`-thinking` 扩展思考） |
+| **图片输入** | 默认开启，支持多模态对话 | 默认开启，对话模型可以读图 | 默认开启，对话模型可以读图（需登录态挂 Cookie） |
+| **图片生成** | `gemini-3.1-flash-image`（`@ai-sdk/google`） | Nano Banana 系列模型，供 Magpie 的图片生成使用（需要 Magpie v0.1.2075+，见下文） | 不支持 |
+| **登录方式** | **粘贴 Google OAuth Refresh Token**（支持单个 `1//...`、JSON 数组批量、任意文本自动提取） | 自动安装官方后端，导入账号后确认连接 | 用无痕窗口登录并复制 `cookie` |
+| **额度卡片** | 同步 **5 小时** 与 **每周** 配额（Gemini / Claude & GPT / Argon） | 显示冷却中的模型与恢复时间 | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
+| **本地后端** | **无需下载后端**（纯插件内置直连 Google Cloud Code `v1internal`） | AIStudio2API（自动安装并跟随官方稳定版） | gemini-web2api-go (`4.31.0-magpie.2` 优化版) |
 
 ---
 
 ## 快速开始
 
-在 Magpie 插件市场安装 **magpie-gemini-web** 后，按需登录以下任一（或两个）Provider。默认由插件下载对应后端、校验 SHA-256 并在后台自启，无需安装 Go 或其它依赖。AI Studio 默认自动跟随官方最新稳定版，也可关闭自动更新、指定自己的程序或连接独立服务。
+在 Magpie 插件市场（或通过本地路径 `magpie plugin add <目录>`）安装 **magpie-gemini-web** 后，按需登录以下任一 Provider。
+
+### 方式零：Antigravity (`antigravity` — Refresh Token 登录)
+
+1. 在 Magpie 中登录 **Antigravity**，选择 **「通过 Refresh Token 登录（支持批量）」**。
+2. 选择账号类型：**个人账号 (Personal)**（常规 Gmail 账号）或 **企业 / GCP (Vertex AI)**，按需填写访问 Google 的代理地址（也可通过环境变量 `ANTIGRAVITY_PROXY` 或插件选项 `antigravity.proxy` 设置）。
+3. 仓库内不硬编码 Google OAuth 客户端凭据。首次使用需通过以下任一方式提供与你的 Refresh Token 匹配的 `client_id` 与 `client_secret`（如 `Antigravity-Manager` 的 `oauth.rs` 中对应的客户端，或自建 Google Cloud OAuth 客户端）：
+   - 登录交互提示中直接填写（验证通过后会自动保存到 `~/.local/share/magpie-antigravity/oauth-clients.json`，下次无需再填）；
+   - 设置环境变量 `ANTIGRAVITY_OAUTH_CLIENT_ID` / `ANTIGRAVITY_OAUTH_CLIENT_SECRET`（企业版可选 `ANTIGRAVITY_GCP_CLIENT_ID` / `ANTIGRAVITY_GCP_CLIENT_SECRET`，或使用 `ANTIGRAVITY_OAUTH_CLIENTS="antigravity_enterprise|id|secret"`）；
+   - 运行 `npm run antigravity:oauth -- --client-id <id> --client-secret <secret>`；
+   - 或在粘贴 JSON 时附带 `client_id` 与 `client_secret` 字段。
+4. 粘贴 Refresh Token（与 Antigravity Tools / Antigravity-Manager 兼容），支持三种格式：
+   - 单个 Token：`1//03...`
+   - JSON 数组：`[{"refresh_token":"1//03..."}, ...]`
+   - 包含 `1//...` Token 的任意文本（自动提取并去重）
+5. 插件会使用 Google OAuth2 换取短期 `access_token`、解析用户邮箱与 `cloudaicompanionProject`、校验可用模型并保存在本机 `~/.local/share/magpie-antigravity/accounts.json`（可通过 `ANTIGRAVITY_DATA_DIR` 修改）。支持多账号自动轮转与 5 小时 / 每周额度展示。
+
+命令行也可直接管理与测试：`npm run antigravity:oauth -- --client-id ... --client-secret ...`、`npm run antigravity:login -- "1//03..." --proxy http://127.0.0.1:7890`、`npm run antigravity:status`、`npm run antigravity:quota`、`npm run antigravity:smoke`。
 
 ### 方式一：Google AI Studio (`ai-studio`)
 

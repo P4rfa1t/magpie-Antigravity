@@ -10,25 +10,42 @@ Use **Google AI Studio** and **Gemini on the web** through your Google account i
 
 ## Which Provider Should I Choose?
 
-The plugin provides two independent providers that can be used individually or together:
+The plugin provides three independent providers that can be used individually or together:
 
-| Feature | Google AI Studio (`ai-studio`) | Gemini Web (`gemini-web`) |
-| :--- | :--- | :--- |
-| **Best for** | **Primary use & coding agents (recommended)** | General chat & web quota |
-| **Key models** | `gemini-4-carbon` (Ultra / eligible accounts), `gemini-4-hydrogen`, `gemini-4-argon`, `gemini-3.1-pro`, Flash series, Deep Research | `gemini-4-hydrogen` (signed-in, including free accounts), `gemini-4-carbon` (paid/Ultra), `gemini-4-neon` (paid/Ultra), `gemini-3.6-flash`, `gemini-3.5-flash-lite` |
-| **Tool calling** | **Native Function Calling**, reliable | Prompt-emulated (experimental; Flash often skips tools) |
-| **Thinking levels** | Supported levels from the model catalog: `minimal` / `low` / `medium` / `high` / `xhigh` (Hydrogen) | `low` (base) / `medium` (`-thinking-medium`, `gemini-4-argon` only) / `high` (`-thinking` extended thinking) |
-| **Image input** | On by default; chat models read images | On by default; chat models read images (needs a signed-in cookie) |
-| **Image generation** | Nano Banana models, for Magpie's image generation (Magpie v0.1.2075+, see below) | Not supported |
-| **Sign-in method** | Automatic official installation; confirm an imported account | Copy `cookie` from a private/incognito window |
-| **Usage cards** | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
-| **Local backend** | AIStudio2API (automatic installation and stable updates) | gemini-web2api-go (`4.31.0-magpie.2` optimized build) |
+| Feature | Antigravity (`antigravity`) | Google AI Studio (`ai-studio`) | Gemini Web (`gemini-web`) |
+| :--- | :--- | :--- | :--- |
+| **Best for** | **Zero-binary direct OAuth Refresh Token access (Gemini 4 & Claude)** | **Primary use & coding agents (recommended)** | General chat & web quota |
+| **Key models** | `gemini-4-neon`, `gemini-4-hydrogen`, `gemini-4-argon`, `gemini-3.8-flash`, `claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-oss-120b-medium` | `gemini-4-carbon` (Ultra / eligible accounts), `gemini-4-hydrogen`, `gemini-4-argon`, `gemini-3.1-pro`, Flash series, Deep Research | `gemini-4-hydrogen` (signed-in, including free accounts), `gemini-4-carbon` (paid/Ultra), `gemini-4-neon` (paid/Ultra), `gemini-3.6-flash`, `gemini-3.5-flash-lite` |
+| **Tool calling** | **Native Function Calling** | **Native Function Calling**, reliable | Prompt-emulated (experimental; Flash often skips tools) |
+| **Thinking levels** | `low` / `medium` / `high` / `xhigh` | Supported levels from the model catalog: `minimal` / `low` / `medium` / `high` / `xhigh` (Hydrogen) | `low` (base) / `medium` (`-thinking-medium`, `gemini-4-argon` only) / `high` (`-thinking` extended thinking) |
+| **Image input** | On by default; multimodal chat | On by default; chat models read images | On by default; chat models read images (needs a signed-in cookie) |
+| **Image generation** | `gemini-3.1-flash-image` (`@ai-sdk/google`) | Nano Banana models, for Magpie's image generation (Magpie v0.1.2075+, see below) | Not supported |
+| **Sign-in method** | **Paste Google OAuth Refresh Token** (single `1//...`, JSON array batch, or auto-extracted from text) | Automatic official installation; confirm an imported account | Copy `cookie` from a private/incognito window |
+| **Usage cards** | Syncs **5-hour** & **weekly** quotas (Gemini / Claude & GPT / Argon) | Shows models currently on cooldown and recovery times | Syncs **5-hour** & **weekly** usage and reset times from the web |
+| **Local backend** | **None required** (direct Node/Bun fetch to Cloud Code `v1internal`) | AIStudio2API (automatic installation and stable updates) | gemini-web2api-go (`4.31.0-magpie.2` optimized build) |
 
 ---
 
 ## Quick Start
 
-Install **magpie-gemini-web** from the Magpie plugin market, then sign in to either (or both) providers below. By default, the plugin downloads the backend, verifies its SHA-256 checksum, and runs it in the background, with no Go installation required. AI Studio automatically follows official stable releases by default. You can disable automatic updates, select your own executable or connect an independent service.
+Install **magpie-gemini-web** from the Magpie plugin market (or via `magpie plugin add <path>`), then sign in to any of the providers below.
+
+### Option 0: Antigravity (`antigravity` — Refresh Token Sign-in)
+
+1. Sign in to **Antigravity** in Magpie and choose **「通过 Refresh Token 登录（支持批量）」** (Sign in with Refresh Token).
+2. Choose account type (**Personal** for standard Gmail accounts, or **Enterprise / GCP (Vertex AI)**) and optionally enter a proxy URL (also configurable via `ANTIGRAVITY_PROXY` or plugin option `antigravity.proxy`).
+3. Google OAuth client credentials are not hardcoded in the repository. On first use, provide the matching `client_id` and `client_secret` for your Refresh Token (e.g., from `Antigravity-Manager` `oauth.rs` or your Google Cloud OAuth app) using any of:
+   - Enter them in the sign-in prompts (saved locally to `~/.local/share/magpie-antigravity/oauth-clients.json` after verification);
+   - Set `ANTIGRAVITY_OAUTH_CLIENT_ID` / `ANTIGRAVITY_OAUTH_CLIENT_SECRET` (optional `ANTIGRAVITY_GCP_CLIENT_ID` / `ANTIGRAVITY_GCP_CLIENT_SECRET`, or `ANTIGRAVITY_OAUTH_CLIENTS`);
+   - Run `npm run antigravity:oauth -- --client-id <id> --client-secret <secret>`;
+   - Or include `client_id` and `client_secret` in the pasted JSON payload.
+4. Paste your Refresh Token (compatible with Antigravity Tools / Antigravity-Manager exports):
+   - Single token: `1//03...`
+   - JSON array: `[{"refresh_token":"1//03..."}, ...]`
+   - Any text containing `1//...` tokens (automatically extracted and deduplicated)
+5. The plugin exchanges the refresh token for a short-lived `access_token`, resolves your email & `cloudaicompanionProject`, verifies available models, and saves accounts locally to `~/.local/share/magpie-antigravity/accounts.json` (`ANTIGRAVITY_DATA_DIR` overrides this path).
+
+CLI helpers are also available: `npm run antigravity:oauth -- --client-id ... --client-secret ...`, `npm run antigravity:login -- "1//03..." --proxy http://127.0.0.1:7890`, `npm run antigravity:status`, `npm run antigravity:quota`, `npm run antigravity:smoke`.
 
 ### Option 1: Google AI Studio (`ai-studio`)
 
