@@ -20,6 +20,8 @@ import {
   antigravitySSEToOpenAIStream,
   antigravityToOpenAIResponse,
   cleanJsonSchema,
+  deriveConversationAnchor,
+  deriveUpstreamSessionId,
   openAIToAntigravityRequest,
   resolveAntigravityModel,
   sanitizeSystemPrompt
@@ -840,5 +842,104 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     assert.equal((await res.json()).choices[0].message.content, 'large recovered');
     assert.equal(hitUrls.some(u => u.includes('sandbox.googleapis.com')), false);
     assert.equal(hitUrls.length, 2);
+  });
+
+  it('scopes upstream sessionId per conversation anchor with deterministic prefix stability', async () => {
+    const dir = makeTempDir();
+    const sentEnvelopes = [];
+    const fetchFn = async (url, init) => {
+      if (url.includes('oauth2.googleapis.com/token')) return Response.json({ access_token: 'tok', expires_in: 3600 });
+      if (url.includes('/userinfo')) return Response.json({ email: 'cachescope@gmail.com' });
+      if (url.includes(':loadCodeAssist')) return Response.json({ cloudaicompanionProject: 'aicode-consumers' });
+      if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+      if (url.includes(':generateContent')) {
+        sentEnvelopes.push(JSON.parse(init.body));
+        return Response.json({
+          response: { candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] }
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const plugin = await AntigravityPlugin({}, {
+      antigravity: { dataDir: dir, clientId: 'cid', clientSecret: 'csec' },
+      fetchFn
+    });
+    const flow = await plugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const signIn = await flow.callback('1//03cache');
+    const loader = await plugin.auth.loader(async () => ({ type: 'api', key: signIn.key, metadata: signIn.metadata }));
+
+    const baseTools = [{
+      type: 'function',
+      function: { name: 'Read', description: 'Read file', parameters: { type: 'object', properties: { path: { type: 'string' } } } }
+    }];
+
+    // Turn 1 and Turn 2 of conversation A should keep the exact same negative-integer sessionId and conv UUID.
+    await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gemini-4-hydrogen',
+        tools: baseTools,
+        messages: [
+          { role: 'system', content: 'You are a helpful coding assistant working in workspace /app.' },
+          { role: 'user', content: '<system-reminder>Time: 10:00</system-reminder>\nInspect index.mjs' }
+        ]
+      })
+    });
+    await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gemini-4-hydrogen',
+        tools: baseTools,
+        messages: [
+          { role: 'system', content: 'You are a helpful coding assistant working in workspace /app.' },
+          { role: 'user', content: '<system-reminder>Time: 10:00</system-reminder>\nInspect index.mjs' },
+          { role: 'assistant', content: null, tool_calls: [{ type: 'function', function: { name: 'Read', arguments: '{"path":"index.mjs"}' } }] },
+          { role: 'tool', content: 'export default 1;' },
+          { role: 'user', content: 'Now check lib/antigravity.mjs' }
+        ]
+      })
+    });
+    // Conversation B / subagent on the same account should receive an isolated sessionId and conv UUID.
+    await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gemini-4-hydrogen',
+        messages: [
+          { role: 'system', content: 'Classify whether this action is safe.' },
+          { role: 'user', content: 'Action: Read README.md' }
+        ]
+      })
+    });
+
+    assert.equal(sentEnvelopes.length, 3);
+    const [e1, e2, e3] = sentEnvelopes;
+    assert.match(e1.request.sessionId, /^-\d+$/);
+    assert.equal(e1.request.sessionId.includes('@'), false);
+    assert.equal(e1.request.sessionId, e2.request.sessionId);
+    assert.notEqual(e1.request.sessionId, e3.request.sessionId);
+    assert.equal(e1.requestId.split('/')[1], e2.requestId.split('/')[1]);
+    assert.notEqual(e1.requestId.split('/')[1], e3.requestId.split('/')[1]);
+
+    // Prefix stability: tools, systemInstruction, and missing-id functionCall fallback stay identical.
+    assert.deepEqual(e1.request.tools, e2.request.tools);
+    assert.deepEqual(e1.request.systemInstruction, e2.request.systemInstruction);
+    assert.deepEqual(e1.request.contents[0], e2.request.contents[0]);
+    const callId1 = e2.request.contents[1].parts[0].functionCall.id;
+    const { envelope: e2Repeat } = openAIToAntigravityRequest({
+      model: 'gemini-4-hydrogen',
+      tools: baseTools,
+      messages: [
+        { role: 'system', content: 'You are a helpful coding assistant working in workspace /app.' },
+        { role: 'user', content: '<system-reminder>Time: 10:00</system-reminder>\nInspect index.mjs' },
+        { role: 'assistant', content: null, tool_calls: [{ type: 'function', function: { name: 'Read', arguments: '{"path":"index.mjs"}' } }] },
+        { role: 'tool', content: 'export default 1;' }
+      ]
+    }, { catalog: SAMPLE_CATALOG, projectId: 'aicode-consumers', email: 'cachescope@gmail.com' });
+    assert.equal(e2Repeat.request.contents[1].parts[0].functionCall.id, callId1);
+    assert.equal(deriveUpstreamSessionId('cachescope@gmail.com', deriveConversationAnchor({ messages: [{ role: 'user', content: 'hi' }] })), deriveUpstreamSessionId('cachescope@gmail.com', deriveConversationAnchor({ messages: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }] })));
   });
 });
