@@ -14,7 +14,7 @@
 | :--- | :--- | :--- | :--- |
 | `GeminiWebPlugin`（默认导出） | `gemini-web` | 管理本机 `gemini-web2api-go` 守护进程，通过浏览器无痕窗口 Cookie 访问网页版 Gemini | `index.mjs`, `lib/backend.mjs`, `lib/native.mjs`, `lib/usage.mjs`, `lib/cleanup.mjs` |
 | `AIStudioPlugin` | `google-aistudio` | 管理本机 `AIStudio2API` 后端，含跨宿主文件锁与自动热更新状态机（TLA+ 建模） | `lib/studio.mjs`, `lib/studio-native.mjs`, `lib/studio-updates.mjs`, `docs/models/studio-lock-protocol.tla` |
-| `AntigravityPlugin`（近期核心开发项） | `antigravity-rt` | **纯 JS 直连 Google Cloud Code `v1internal` 接口**（无需本机安装或拉起 `agy` CLI 子进程），使用 OAuth Refresh Token（`1//...`）鉴权 | `lib/antigravity.mjs`, `lib/antigravity-mapper.mjs`, `lib/antigravity-oauth.mjs`, `scripts/antigravity.mjs` |
+| `AntigravityPlugin`（近期核心开发项） | `antigravity-rt` | **纯 JS 直连 Google Cloud Code `v1internal` 接口**（无需本机安装或拉起 `agy` CLI 子进程），使用 OAuth Refresh Token（`1//...`）鉴权 | `lib/antigravity.mjs`, `lib/antigravity-mapper.mjs`, `lib/antigravity-oauth.mjs`, `lib/antigravity-ua.mjs`, `scripts/antigravity.mjs` |
 
 ---
 
@@ -81,8 +81,12 @@ npm run interrogate -- --run
 
 Google `v1internal` 网关会对请求头、JSON 拓扑及 Prompt 文本执行特征检测；命中第三方客户端指纹（哪怕配额充足）也会直接返回裸 `429 Resource has been exhausted (e.g. check quota)`。本项目在 `lib/antigravity-mapper.mjs` 与 `lib/antigravity-oauth.mjs` 中构建了四层防护：
 
-1. **Egress Header 与官方 Envelope 拓扑对齐**
-   - 出站 Hub `User-Agent` 通过 `currentEgressUserAgent` 生成（默认 `antigravity/hub/2.33.0 ... cl=1023160026`，可通过 `ANTIGRAVITY_HUB_VERSION` / `ANTIGRAVITY_HUB_CL` 覆盖）；OAuth 刷新头 `currentOAuthUserAgent` 默认 `vscode/1.99.0 (Antigravity/4.3.0)`（可通过 `ANTIGRAVITY_OAUTH_USER_AGENT` 覆盖，已移除旧 `1.X.X` 占位字面量）。
+1. **Egress Header 与官方 Envelope 拓扑对齐（含动态 UA 对齐与防 Franken-UA 不变量）**
+   - 出站 Hub `User-Agent` 与 OAuth `User-Agent` 由 `lib/antigravity-ua.mjs` 统一解析（`resolveAntigravityUserAgents`），优先级为：
+     1. **显式成对环境变量覆盖**：必须同时提供 `ANTIGRAVITY_HUB_VERSION` 与 `ANTIGRAVITY_HUB_CL` 才覆盖 Hub UA（单边设置会被忽略，严禁与内置或缓存字段混拼出「缝合怪 UA / Frankenstein UA」，例如把新版 `2.35.1` 错配旧版 `cl=1023160026`）；`ANTIGRAVITY_OAUTH_USER_AGENT` 可独立覆盖 OAuth 刷新头。
+     2. **持久化指纹缓存 `${dataDir}/hub-version.json`（及 Option A 本机自动探测）**：文件格式为 `{ version, cl, oauthUserAgent?, source, detectedAt, binaryPath? | archiveUrl? }`，写入前严格校验 `version`（SemVer）与 `cl`（`^\d{6,}$`）成对存在并以 `0o700` 目录 / `0o600` 临时文件原子重命名落盘；读取时若字段缺失或格式异常则直接丢弃。若缓存缺失且未禁用 `detectLocal`，`detectLocalAntigravityFingerprint` 会以带 TTL 节流的非联网方式扫描 `ANTIGRAVITY_INSTALL_DIR` 及 Windows/macOS/Linux 标准 Antigravity 安装目录中的 `language_server*` / `antigravity` 二进制（分块流式 + 重叠尾缓冲）与 `product.json`/`package.json`，提取到有效成对指纹即落盘 `source: 'local'`。
+     3. **内置成对基线**：`OFFICIAL_HUB_VERSION = '2.33.0'` + `OFFICIAL_HUB_CL = '1023160026'` + `NATIVE_OAUTH_USER_AGENT = 'vscode/1.99.0 (Antigravity/4.3.0)'`。
+   - **Option C 官方归档流式同步 (`syncHubVersionFromOfficial`)**：当本机未安装官方客户端时，可通过 `npm run antigravity:sync-ua` 从 `https://antigravity.google/download` 解析官方下载链接（`parseOfficialDownloadPage` 优先选择 `linux-x64/Antigravity.tar.gz`），通过 `node:zlib` `createGunzip()` + 零依赖流式 tar 解析器扫描候选中文件；一旦提取到成对 `(version, cl)` 即刻通过 `AbortController` 中止下载流并原子写入 `${dataDir}/hub-version.json`（`source: 'official-sync'`）。
    - 外层 Envelope 严格保持 `['project', 'requestId', 'request', 'model', 'userAgent', 'requestType']`（个人 Gmail 为 `userAgent: 'antigravity'`，企业号为 `'jetski'`；存在工具上下文时带 `requestType: 'agent'`）。
    - `innerRequest` 字段顺序固定为：`contents -> systemInstruction -> tools -> toolConfig -> labels -> generationConfig -> sessionId`。
    - `requestId` 采用 `agent/<deterministicConvUuid>/<timestamp>/<trajectoryUuid>/<step>`：同一用户主回合及其后续工具调用轨迹复用确定性 `trajectoryUuid`（直到开启下一个用户提问才推进），且 `requestId` 末段 `step`、`labels.last_step_index` 与 `labels.request_id` 统一采用已完成的 `model` 回合数；不注入虚假的 `safetySettings`。
@@ -151,7 +155,7 @@ Google `v1internal` 网关会对请求头、JSON 拓扑及 Prompt 文本执行�
 | 插件选项 (`antigravity.*`) | 对应环境变量 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `proxy` | `ANTIGRAVITY_PROXY` | `""` | 访问 Google 的 HTTP/HTTPS 代理（容器内请用 `http://host.docker.internal:<port>`） |
-| `dataDir` | `ANTIGRAVITY_DATA_DIR` | `~/.local/share/magpie-antigravity` | 存放 `accounts.json` 与 `oauth-clients.json` 的本机目录 |
+| `dataDir` | `ANTIGRAVITY_DATA_DIR` | `~/.local/share/magpie-antigravity` | 存放 `accounts.json`、`oauth-clients.json`、`signature-cache.json` 与 `hub-version.json` 的本机目录 |
 | `clientId` / `clientSecret` | — | — | Personal Google OAuth 客户端凭据（首次填入或由导入 JSON 自动保存） |
 | `gcpClientId` / `gcpClientSecret` | — | — | Enterprise / GCP OAuth 客户端凭据 |
 | `allowTools` / `allowImages` / `imageModels` | — | `true` | 是否启用工具调用、图片输入与生图模型 |
@@ -160,13 +164,17 @@ Google `v1internal` 网关会对请求头、JSON 拓扑及 Prompt 文本执行�
 | `compactPrompt` | `ANTIGRAVITY_COMPACT_PROMPT` | `false` (`1`/`true` 开启) | 激进精简：剥离系统提示词中的 `<example>` 块并将默认工具预算收紧至 `12000` |
 | `toolTokenBudget` | `ANTIGRAVITY_TOOL_TOKEN_BUDGET` | `18000`（`compactPrompt` 下 `12000`） | 工具 Schema 描述 token 预算上限；设为 `0` 或 `off` 可完全关闭裁剪 |
 | `failoverOnError` | `ANTIGRAVITY_FAILOVER` | `true` (`0`/`false`/`off` 关闭) | 单账号报错（`429`/`503`/`403`/`401`）时是否同请求自动轮换至下一账号 |
-| — | `ANTIGRAVITY_HUB_VERSION` / `ANTIGRAVITY_HUB_CL` / `ANTIGRAVITY_OAUTH_USER_AGENT` | 官方当前版本常量 | 分别覆盖出站 Hub `User-Agent` 版本/changelist 与 OAuth 刷新 `User-Agent` |
+| — | `ANTIGRAVITY_INSTALL_DIR` | 自动探测常见系统安装路径 | 指定本机官方 Antigravity 客户端目录供 Option A（`--local-only`）扫描提取指纹 |
+| — | `ANTIGRAVITY_HUB_VERSION` / `ANTIGRAVITY_HUB_CL` / `ANTIGRAVITY_OAUTH_USER_AGENT` | `hub-version.json` 缓存或内置基线 | 覆盖出站 Hub UA（必须成对设置 Version 与 CL 才生效）与 OAuth 刷新 UA |
 | — | `ANTIGRAVITY_NORMALIZE_IDENTITY` | 默认开启（`0`/`false` 关闭） | 是否将第三方 Agent 身份重写为 Antigravity（即使关闭仍会剥离 WAF 计费头） |
 
 ### 6.2 本地诊断 CLI (`scripts/antigravity.mjs`)
 
 ```bash
-npm run antigravity:status                                     # 查看本机数据目录、OAuth 配置与已保存账号
+npm run antigravity:status                                     # 查看数据目录、有效 Egress/OAuth UA、hub-version.json 缓存与账号
+npm run antigravity:sync-ua                                    # Option C：从官方下载页流式解析归档提取成对 (version, cl) 并落盘
+npm run antigravity:sync-ua -- --local-only                    # Option A：仅扫描本机 Antigravity 客户端（可加 --install-dir <路径>）
+npm run antigravity:sync-ua -- --proxy http://127.0.0.1:7890   # 通过 HTTP 代理同步官方归档指纹
 npm run antigravity:oauth -- --client-id <ID> --client-secret <SECRET>
 npm run antigravity:login -- --file exported-accounts.json     # 导入并在线校验 Refresh Token
 npm run antigravity:models                                     # 打印聚合后的可用模型及 effort 变体
