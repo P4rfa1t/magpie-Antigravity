@@ -222,7 +222,7 @@ describe('Antigravity fingerprint extraction & local detection', () => {
 
   it('prefers package.json hub version over product.json IDE version with Blaze CL, and rejects IDE-only pairing', async () => {
     const blazePayload = Buffer.from(
-      'noise\0changelist 1029194470 //depot/branches/antigravity_web_release_branch/main.go\0',
+      'noise\0changelist 1029194470 with baseline 1027784732 in a mint client based on //depot/branches/antigravity_web_release_branch/main.go\0',
       'utf8'
     );
 
@@ -447,7 +447,7 @@ describe('Official download page parser & streaming tar.gz sync', () => {
       {
         name: 'Antigravity/resources/bin/language_server',
         content: Buffer.from(
-          'bin\0changelist 1066000777 //depot/branches/antigravity_web_release_branch/server\0',
+          'bin\0googlefile:/google_src/files/1066000777/depot/branches/antigravity_web_release_branch/server\0',
           'utf8'
         )
       }
