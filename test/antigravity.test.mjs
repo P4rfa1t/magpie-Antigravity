@@ -14,6 +14,7 @@ import {
   currentOAuthUserAgent,
   fetchWithProxy,
   loadAntigravityAccounts,
+  parseAvailableCredits,
   parseRefreshTokenInput,
   refreshAccessToken,
   removeAntigravityAccount,
@@ -22,23 +23,30 @@ import {
 } from '../lib/antigravity-oauth.mjs';
 import {
   OFFICIAL_ANTIGRAVITY_IDENTITY,
+  OFFICIAL_SILENCE_BOUNDARY_PREFIX,
   SENTINEL_SIGNATURE,
   antigravitySSEToOpenAIStream,
   antigravityToOpenAIResponse,
+  buildSilenceBoundaryText,
   cleanJsonSchema,
   deriveConversationAnchor,
   deriveUpstreamSessionId,
   fitToolDeclarations,
   openAIToAntigravityRequest,
   resolveAntigravityModel,
-  sanitizeSystemPrompt
+  sanitizeSystemPrompt,
+  wrapGeminiNativeRequest
 } from '../lib/antigravity-mapper.mjs';
 import {
   ANTIGRAVITY_BASE,
   ANTIGRAVITY_ID,
   antigravitySettings,
   buildAntigravityModels,
-  loadSignatureStore
+  isBareAntigravity429,
+  isModelCapacityExhaustedError,
+  isQuotaExhausted429,
+  loadSignatureStore,
+  shouldMarkCreditsExhausted
 } from '../lib/antigravity.mjs';
 
 function makeTempDir() {
@@ -445,10 +453,13 @@ describe('Antigravity OpenAI <-> v1internal mapping', () => {
     }, { catalog: SAMPLE_CATALOG, projectId: 'aicode-consumers', email: 'u@gmail.com', sessionId: 'cc-sess' });
 
     assert.equal(targetModel, 'gemini-4-hydrogen-high');
-    // Outbound systemInstruction is kept pure official identity; full directives are sideloaded into contents[0].
+    // Outbound systemInstruction keeps official identity + static silence boundary; full directives are sideloaded into contents[0].
     assert.deepEqual(envelope.request.systemInstruction, {
       role: 'user',
-      parts: [{ text: OFFICIAL_ANTIGRAVITY_IDENTITY }]
+      parts: [
+        { text: OFFICIAL_ANTIGRAVITY_IDENTITY },
+        { text: buildSilenceBoundaryText('gemini-4-hydrogen-high', SAMPLE_CATALOG.models['gemini-4-hydrogen-high']) }
+      ]
     });
     assert.equal(envelope.request.contents[0].parts[0].text.startsWith('<system-instruction priority="critical" role="developer">'), true);
     assert.ok(envelope.request.contents[0].parts[0].text.includes('Prefer read file, edit file, and write file over cat/sed'));
@@ -605,7 +616,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     assert.equal(chatJson.choices[0].message.content, 'from-account-2');
 
     const genCall = requestLog.find(r => r.url.includes(':generateContent') && r.headers.Authorization === 'Bearer tok2');
-    assert.equal(genCall.headers['anthropic-beta'], 'claude-code-20250219');
+    assert.equal(genCall.headers['anthropic-beta'], undefined);
     assert.equal(genCall.headers['x-goog-user-project'], undefined); // consumer aicode-consumers stripped
   });
 
@@ -1406,5 +1417,643 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
       }
     });
     assert.equal(fallbackAcc.projectId, 'bamboo-precept-lgxtn');
+  });
+
+  it('disables telemetry via :setUserSettings and verifies via :fetchUserInfo on login', async () => {
+    const dir = makeTempDir();
+    const calls = [];
+    const verified = await verifyRefreshToken('1//03privacy', {
+      dataDir: dir,
+      clientId: 'test-personal-id',
+      clientSecret: 'test-personal-secret',
+      fetchFn: async (url, init) => {
+        let parsedBody = null;
+        if (typeof init?.body === 'string' && init.body.trim().startsWith('{')) {
+          try { parsedBody = JSON.parse(init.body); } catch {}
+        }
+        calls.push({ url, body: parsedBody, headers: init?.headers || {} });
+        if (url.includes('oauth2.googleapis.com/token')) return Response.json({ access_token: 'tok-priv', expires_in: 3600 });
+        if (url.includes('/userinfo')) return Response.json({ email: 'priv@gmail.com' });
+        if (url.includes(':loadCodeAssist')) return Response.json({ cloudaicompanionProject: 'priv-proj-1', currentTier: { id: 'free-tier' } });
+        if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+        if (url.includes(':setUserSettings')) return Response.json({ userSettings: {} });
+        if (url.includes(':fetchUserInfo')) return Response.json({ userSettings: {}, regionCode: 'US' });
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    assert.equal(verified.privacyMode, 'privacy_set');
+    const setCall = calls.find(c => c.url.includes(':setUserSettings'));
+    const infoCall = calls.find(c => c.url.includes(':fetchUserInfo'));
+    assert.ok(setCall);
+    assert.deepEqual(setCall.body, { user_settings: {} });
+    assert.equal(setCall.headers['X-Goog-Api-Client'], 'gl-node/22.21.1');
+    assert.ok(infoCall);
+    assert.deepEqual(infoCall.body, { project: 'priv-proj-1' });
+
+    const telemetryStillOn = await verifyRefreshToken('1//03privacyfail', {
+      dataDir: dir,
+      clientId: 'test-personal-id',
+      clientSecret: 'test-personal-secret',
+      fetchFn: async url => {
+        if (url.includes('oauth2.googleapis.com/token')) return Response.json({ access_token: 'tok-priv2', expires_in: 3600 });
+        if (url.includes('/userinfo')) return Response.json({ email: 'priv2@gmail.com' });
+        if (url.includes(':loadCodeAssist')) return Response.json({ cloudaicompanionProject: 'priv-proj-2', currentTier: { id: 'free-tier' } });
+        if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+        if (url.includes(':setUserSettings')) return Response.json({ userSettings: { telemetryEnabled: true } });
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    assert.equal(telemetryStillOn.privacyMode, 'privacy_set_failed');
+  });
+
+  it('handles prefixItems, tuple items, typed const, enum intersection, mixed built-in/function tools, and Gemini-native cleaning', () => {
+    const cleaned = cleanJsonSchema({
+      type: 'object',
+      properties: {
+        tupleA: { type: 'array', prefixItems: [{ type: 'integer' }, { type: 'string' }] },
+        tupleB: { type: 'array', items: [{ type: 'boolean' }, { type: 'null' }] },
+        port: { const: 8080 },
+        env: { type: 'string', enum: ['dev', 'prod'], const: 'prod' }
+      }
+    });
+    assert.equal(cleaned.properties.tupleA.type, 'ARRAY');
+    assert.equal(cleaned.properties.tupleA.prefixItems, undefined);
+    assert.equal(cleaned.properties.tupleA.items.type, 'INTEGER');
+    assert.equal(cleaned.properties.tupleB.items.type, 'BOOLEAN');
+    assert.deepEqual(cleaned.properties.port, { type: 'INTEGER', enum: ['8080'] });
+    assert.deepEqual(cleaned.properties.env, { type: 'STRING', enum: ['prod'] });
+
+    // Mixed built-in web_search + function tool drops built-in search to prevent v1internal 400.
+    const mixed = openAIToAntigravityRequest({
+      model: 'claude-opus-5-5',
+      reasoning_effort: 'high',
+      messages: [{ role: 'user', content: 'run tool' }],
+      tools: [
+        { type: 'web_search' },
+        { type: 'function', function: { name: 'read_file', parameters: { type: 'object', properties: { p: { type: 'string' } } } } }
+      ]
+    }, { catalog: SAMPLE_CATALOG, projectId: 'p1' });
+    assert.equal(mixed.targetModel, 'claude-opus-5-5-high');
+    assert.equal(mixed.envelope.requestType, 'agent');
+    assert.equal(mixed.envelope.request.tools.length, 1);
+    assert.equal(mixed.envelope.request.tools[0].functionDeclarations[0].name, 'read_file');
+
+    // Pure built-in web_search routes to gemini-2.5-flash with googleSearch & requestType=web_search.
+    const searchOnly = openAIToAntigravityRequest({
+      model: 'claude-opus-5-5',
+      messages: [{ role: 'user', content: 'latest news' }],
+      tools: [{ type: 'web_search_20250305' }]
+    }, { catalog: SAMPLE_CATALOG, projectId: 'p1' });
+    assert.equal(searchOnly.targetModel, 'gemini-2.5-flash');
+    assert.equal(searchOnly.envelope.requestType, 'web_search');
+    assert.ok(searchOnly.envelope.request.tools[0].googleSearch);
+
+    // Gemini-native wrapper cleans $defs/$ref/prefixItems and resolves built-in mix.
+    const wrappedNative = wrapGeminiNativeRequest({
+      contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+      tools: [
+        { googleSearch: {} },
+        {
+          functionDeclarations: [{
+            name: 'lookup',
+            parameters: {
+              $defs: { Pair: { type: 'array', prefixItems: [{ type: 'number' }] } },
+              type: 'object',
+              properties: { pair: { $ref: '#/$defs/Pair' } }
+            }
+          }]
+        }
+      ]
+    }, { targetModel: 'gemini-4-hydrogen-high', projectId: 'p1' });
+    assert.equal(wrappedNative.requestType, 'agent');
+    assert.equal(wrappedNative.request.tools.length, 1);
+    assert.equal(
+      wrappedNative.request.tools[0].functionDeclarations[0].parameters.properties.pair.items.type,
+      'NUMBER'
+    );
+  });
+
+  it('avoids dummy signatures on Claude models and retries signature-related 400s in two stages (OpenAI & Gemini-native)', async () => {
+    const dir = makeTempDir();
+    // 1. Mapping level: Claude drops missing signatures & downgrades unsigned thinking; keeps valid cached signatures.
+    const claudeMapped = openAIToAntigravityRequest({
+      model: 'claude-opus-5-5',
+      reasoning_effort: 'high',
+      messages: [
+        { role: 'user', content: 'hi' },
+        {
+          role: 'assistant',
+          reasoning_content: 'unsigned thought',
+          tool_calls: [{ id: 'call_unsig', type: 'function', function: { name: 'do_x', arguments: '{}' } }]
+        },
+        { role: 'tool', tool_call_id: 'call_unsig', content: 'ok' }
+      ]
+    }, { catalog: SAMPLE_CATALOG, projectId: 'p1', signatureCache: new Map() });
+    assert.equal(claudeMapped.envelope.request.contents[1].parts[0].thought, undefined);
+    assert.equal(claudeMapped.envelope.request.contents[1].parts[0].text, 'unsigned thought');
+    assert.equal(claudeMapped.envelope.request.contents[1].parts[1].thoughtSignature, undefined);
+    assert.equal(claudeMapped.envelope.request.generationConfig.thinkingConfig, undefined);
+
+    // 2. End-to-end 400 signature rectifier: Stage 1 (thinking strip) -> Stage 2 (thinking+tool downgrade).
+    const bodies = [];
+    const fetchFn = async (url, init) => {
+      if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+      if (url.includes(':generateContent')) {
+        const parsed = JSON.parse(init.body);
+        bodies.push(parsed);
+        if (bodies.length < 3) {
+          return Response.json(
+            { error: { code: 400, message: 'Corrupted thought_signature in history' } },
+            { status: 400 }
+          );
+        }
+        return Response.json({
+          response: {
+            candidates: [{ content: { parts: [{ text: 'recovered-after-stage-2' }] }, finishReason: 'STOP' }],
+            usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 4, totalTokenCount: 9 }
+          }
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+    saveAntigravityAccount({
+      id: 'sig@gmail.com',
+      email: 'sig@gmail.com',
+      refreshToken: '1//03sig',
+      accessToken: 'tok-sig',
+      expiresAt: Date.now() + 3600_000,
+      clientType: 'personal',
+      projectId: 'p1'
+    }, dir);
+    const plugin = await AntigravityPlugin({}, { antigravity: { dataDir: dir }, fetchFn });
+    const authObj = { type: 'api', key: '1//03sig', metadata: { account: 'sig@gmail.com' } };
+    const loader = await plugin.auth.loader(async () => authObj);
+
+    const openAIRes = await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gemini-4-hydrogen-high',
+        stream: false,
+        messages: [
+          { role: 'user', content: 'start' },
+          {
+            role: 'assistant',
+            reasoning_content: 'stale thought',
+            signature: 'bad-sig-1',
+            tool_calls: [{ id: 'call_bad', type: 'function', function: { name: 'run', arguments: '{}' } }]
+          },
+          { role: 'tool', tool_call_id: 'call_bad', content: 'done' }
+        ]
+      })
+    });
+    assert.equal(openAIRes.status, 200);
+    const openAIJson = await openAIRes.json();
+    assert.equal(openAIJson.choices[0].message.content, 'recovered-after-stage-2');
+    assert.equal(bodies.length, 3);
+    assert.equal(bodies[1].request.contents[1].parts.some(p => p.thought), false);
+    assert.equal(bodies[2].request.contents[1].parts.some(p => p.functionCall), false);
+
+    // 3. Gemini-native signature rectifier replaces bad thoughtSignature with SENTINEL_SIGNATURE.
+    const nativeBodies = [];
+    const nativeFetchFn = async (url, init) => {
+      if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+      if (url.includes(':generateContent')) {
+        nativeBodies.push(JSON.parse(init.body));
+        if (nativeBodies.length === 1) {
+          return Response.json(
+            { error: { code: 400, message: 'Corrupted thought signature.' } },
+            { status: 400 }
+          );
+        }
+        return Response.json({
+          response: {
+            candidates: [{ content: { parts: [{ text: 'native-recovered' }] }, finishReason: 'STOP' }]
+          }
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+    const nativePlugin = await AntigravityPlugin({}, { antigravity: { dataDir: dir }, fetchFn: nativeFetchFn });
+    const nativeLoader = await nativePlugin.auth.loader(async () => authObj);
+    const nativeRes = await nativeLoader.fetch(`${ANTIGRAVITY_BASE}/models/gemini-4-hydrogen-high:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          { role: 'user', parts: [{ text: 'go' }] },
+          { role: 'model', parts: [{ functionCall: { name: 'x', args: {} }, thoughtSignature: 'corrupt-other-acc' }] },
+          { role: 'user', parts: [{ functionResponse: { name: 'x', response: { ok: true } } }] }
+        ]
+      })
+    });
+    assert.equal(nativeRes.status, 200);
+    assert.equal(nativeBodies.length, 2);
+    assert.equal(nativeBodies[1].request.contents[1].parts[0].thoughtSignature, SENTINEL_SIGNATURE);
+  });
+
+  it('guards multi-account pools against consecutive bare-429 storms and global 503 MODEL_CAPACITY_EXHAUSTED', async () => {
+    assert.equal(isBareAntigravity429(429, JSON.stringify({ error: { code: 429, message: 'Resource has been exhausted' } })), true);
+    assert.equal(isBareAntigravity429(429, JSON.stringify({ error: { details: [{ retryDelay: '10s' }] } })), false);
+    assert.equal(isModelCapacityExhaustedError(503, JSON.stringify({ error: { details: [{ reason: 'MODEL_CAPACITY_EXHAUSTED' }] } })), true);
+
+    const dir = makeTempDir();
+    for (const [id, tok] of [['a1@gmail.com', 'tok1'], ['a2@gmail.com', 'tok2'], ['a3@gmail.com', 'tok3']]) {
+      saveAntigravityAccount({
+        id,
+        email: id,
+        refreshToken: `1//03${tok}`,
+        accessToken: tok,
+        expiresAt: Date.now() + 3600_000,
+        clientType: 'personal',
+        projectId: 'p1'
+      }, dir);
+    }
+
+    const calledAuths = [];
+    let mode = 'bare429';
+    const fetchFn = async (url, init) => {
+      if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+      if (url.includes(':generateContent')) {
+        calledAuths.push(init.headers.Authorization);
+        if (mode === 'bare429') {
+          return Response.json(
+            { error: { code: 429, message: 'Resource has been exhausted (e.g. check quota).' } },
+            { status: 429 }
+          );
+        }
+        return Response.json(
+          {
+            error: {
+              code: 503,
+              status: 'UNAVAILABLE',
+              details: [{ reason: 'MODEL_CAPACITY_EXHAUSTED' }]
+            }
+          },
+          { status: 503 }
+        );
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const plugin = await AntigravityPlugin({}, {
+      antigravity: { dataDir: dir },
+      fetchFn,
+      rateLimitRetries: 0
+    });
+    const authObj = {
+      type: 'api',
+      key: '1//03tok1',
+      metadata: { accounts: ['a1@gmail.com', 'a2@gmail.com', 'a3@gmail.com'] }
+    };
+    const loader = await plugin.auth.loader(async () => authObj);
+
+    // Consecutive bare 429 across a1 -> a2 stops before hitting a3 (and only cools a1).
+    const res1 = await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-hydrogen-high', messages: [{ role: 'user', content: 'huge' }] })
+    });
+    assert.equal(res1.status, 429);
+    assert.deepEqual([...new Set(calledAuths)], ['Bearer tok1', 'Bearer tok2']);
+
+    // Next request skips cooled tok1 first and starts on tok2; hitting 503 MODEL_CAPACITY_EXHAUSTED stops immediately.
+    calledAuths.length = 0;
+    mode = 'capacity';
+    const res2 = await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-hydrogen-high', messages: [{ role: 'user', content: 'cap' }] })
+    });
+    assert.equal(res2.status, 503);
+    assert.deepEqual([...new Set(calledAuths)], ['Bearer tok2']);
+  });
+
+  it('injects deterministic silence boundary + model declaration and syncs inference headers with Magpie options', async () => {
+    // 1. Short third-party identity system prompt splits boundary between official identity and trailing instructions.
+    const shortIdentity = openAIToAntigravityRequest({
+      model: 'claude-opus-5-5',
+      reasoning_effort: 'high',
+      messages: [
+        { role: 'system', content: 'You are Claude Code. Help debug tests.' },
+        { role: 'user', content: 'hello' }
+      ]
+    }, { catalog: SAMPLE_CATALOG, projectId: 'p1', email: 'u@gmail.com', sessionId: 's1' });
+    assert.equal(shortIdentity.envelope.request.systemInstruction.parts.length, 3);
+    assert.equal(shortIdentity.envelope.request.systemInstruction.parts[0].text, OFFICIAL_ANTIGRAVITY_IDENTITY);
+    assert.ok(shortIdentity.envelope.request.systemInstruction.parts[1].text.startsWith(OFFICIAL_SILENCE_BOUNDARY_PREFIX));
+    assert.ok(shortIdentity.envelope.request.systemInstruction.parts[1].text.includes('ModelId is claude-opus-5-5-high.'));
+    assert.equal(shortIdentity.envelope.request.systemInstruction.parts[2].text, 'Help debug tests.');
+
+    // 2. Same conversation produces byte-identical systemInstruction across turns; silenceBoundary: false disables boundary.
+    const nextTurn = openAIToAntigravityRequest({
+      model: 'claude-opus-5-5',
+      reasoning_effort: 'high',
+      messages: [
+        { role: 'system', content: 'You are Claude Code. Help debug tests.' },
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi' },
+        { role: 'user', content: 'next' }
+      ]
+    }, { catalog: SAMPLE_CATALOG, projectId: 'p1', email: 'u@gmail.com', sessionId: 's1' });
+    assert.deepEqual(nextTurn.envelope.request.systemInstruction, shortIdentity.envelope.request.systemInstruction);
+
+    const disabledBoundary = openAIToAntigravityRequest({
+      model: 'claude-opus-5-5',
+      reasoning_effort: 'high',
+      messages: [
+        { role: 'system', content: 'You are Claude Code.' },
+        { role: 'user', content: 'hello' }
+      ]
+    }, { catalog: SAMPLE_CATALOG, projectId: 'p1', silenceBoundary: false });
+    assert.deepEqual(disabledBoundary.envelope.request.systemInstruction, {
+      role: 'user',
+      parts: [{ text: OFFICIAL_ANTIGRAVITY_IDENTITY }]
+    });
+
+    // 3. Coexistence with GeminiWebPlugin + antigravity nested options (Magpie plugin options contract).
+    const coexisting = await GeminiWebPlugin({}, {
+      antigravity: {
+        silenceBoundary: false,
+        userProjectHeader: 'never',
+        claudeBetaHeader: ''
+      }
+    });
+    assert.ok(coexisting.auth);
+
+    // 4. Header sync: no default anthropic-beta, x-goog-user-project omitted on personal accounts, sent on enterprise real GCP project.
+    const dir = makeTempDir();
+    saveAntigravityAccount({
+      id: 'personal@gmail.com',
+      email: 'personal@gmail.com',
+      refreshToken: '1//03pers',
+      accessToken: 'tok-pers',
+      expiresAt: Date.now() + 3600_000,
+      clientType: 'personal',
+      projectId: 'personal-proj-999'
+    }, dir);
+    saveAntigravityAccount({
+      id: 'corp@acme.com',
+      email: 'corp@acme.com',
+      refreshToken: '1//03corp',
+      accessToken: 'tok-corp',
+      expiresAt: Date.now() + 3600_000,
+      clientType: 'enterprise',
+      projectId: 'gcp-enterprise-123'
+    }, dir);
+
+    const headerLog = [];
+    const fetchFn = async (url, init) => {
+      if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+      if (url.includes(':generateContent')) {
+        headerLog.push({ auth: init.headers.Authorization, headers: init.headers, body: JSON.parse(init.body) });
+        return Response.json({
+          response: {
+            candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }]
+          }
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const plugin = await AntigravityPlugin({}, { antigravity: { dataDir: dir }, fetchFn });
+    const persLoader = await plugin.auth.loader(async () => ({
+      type: 'api',
+      key: '1//03pers',
+      metadata: { account: 'personal@gmail.com' }
+    }));
+    const persRes = await persLoader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-opus-5-5-high', messages: [{ role: 'user', content: 'hi' }] })
+    });
+    assert.equal(persRes.status, 200);
+    assert.equal(headerLog[0].headers['anthropic-beta'], undefined);
+    assert.equal(headerLog[0].headers['x-goog-user-project'], undefined);
+
+    const corpLoader = await plugin.auth.loader(async () => ({
+      type: 'api',
+      key: '1//03corp',
+      metadata: { account: 'corp@acme.com' }
+    }));
+    const corpRes = await corpLoader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-opus-5-5-high', messages: [{ role: 'user', content: 'hi' }] })
+    });
+    assert.equal(corpRes.status, 200);
+    assert.equal(headerLog[1].headers['anthropic-beta'], undefined);
+    assert.equal(headerLog[1].headers['x-goog-user-project'], 'gcp-enterprise-123');
+  });
+
+  it('supports Google One AI Credits overages (free pool first, threshold check, 5h cooldown, and usage card display)', async () => {
+    assert.equal(isQuotaExhausted429(429, JSON.stringify({ error: { status: 'RESOURCE_EXHAUSTED', message: 'QUOTA_EXHAUSTED' } })), true);
+    assert.equal(isQuotaExhausted429(429, JSON.stringify({ error: { details: [{ reason: 'RATE_LIMIT_EXCEEDED', retryDelay: '1s' }] } })), false);
+    assert.equal(shouldMarkCreditsExhausted(429, JSON.stringify({ error: { message: 'Insufficient credits' } })), true);
+    assert.equal(shouldMarkCreditsExhausted(503, JSON.stringify({ error: { message: 'Insufficient credits' } })), false);
+    assert.deepEqual(
+      parseAvailableCredits([{ creditType: 'GOOGLE_ONE_AI', creditAmount: '250', minimumCreditAmountForUsage: '10' }]),
+      [{ creditType: 'GOOGLE_ONE_AI', creditAmount: 250, minimumCreditAmountForUsage: 10 }]
+    );
+
+    const dir = makeTempDir();
+    // 1. Login extracts paidTier.availableCredits and usage card shows aside AI Credits window.
+    const verified = await verifyRefreshToken('1//03overage', {
+      dataDir: dir,
+      clientId: 'test-personal-id',
+      clientSecret: 'test-personal-secret',
+      fetchFn: async url => {
+        if (url.includes('oauth2.googleapis.com/token')) return Response.json({ access_token: 'tok-ov', expires_in: 3600 });
+        if (url.includes('/userinfo')) return Response.json({ email: 'pro@gmail.com' });
+        if (url.includes(':loadCodeAssist')) {
+          return Response.json({
+            cloudaicompanionProject: 'proj-pro',
+            paidTier: {
+              id: 'g1-pro-tier',
+              availableCredits: [{ creditType: 'GOOGLE_ONE_AI', creditAmount: '120', minimumCreditAmountForUsage: '5' }]
+            }
+          });
+        }
+        if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+        if (url.includes(':setUserSettings')) return Response.json({ userSettings: {} });
+        if (url.includes(':fetchUserInfo')) return Response.json({ userSettings: {} });
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    assert.equal(verified.availableCredits[0].creditAmount, 120);
+    saveAntigravityAccount(verified, dir);
+
+    // 2. Two accounts: acc1 (credits eligible), acc2 (free quota still available first, then also exhausted).
+    saveAntigravityAccount({
+      id: 'acc2@gmail.com',
+      email: 'acc2@gmail.com',
+      refreshToken: '1//03acc2',
+      accessToken: 'tok-acc2',
+      expiresAt: Date.now() + 3600_000,
+      clientType: 'personal',
+      projectId: 'proj-2'
+    }, dir);
+
+    const calls = [];
+    let acc2Exhausted = false;
+    let overageBehavior = 'succeed';
+    const poolFetchFn = async (url, init) => {
+      if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+      if (url.includes(':retrieveUserQuotaSummary')) {
+        return Response.json({
+          groups: [],
+          availableCredits: [{ creditType: 'GOOGLE_ONE_AI', creditAmount: '120', minimumCreditAmountForUsage: '5' }]
+        });
+      }
+      if (url.includes(':generateContent')) {
+        const body = JSON.parse(init.body);
+        calls.push({ auth: init.headers.Authorization, enabledCreditTypes: body.enabledCreditTypes });
+        if (Array.isArray(body.enabledCreditTypes) && body.enabledCreditTypes.includes('GOOGLE_ONE_AI')) {
+          if (overageBehavior === 'exhaust') {
+            return Response.json({ error: { code: 429, message: 'Insufficient credits' } }, { status: 429 });
+          }
+          return Response.json({
+            response: {
+              candidates: [{ content: { parts: [{ text: 'from-ai-credits' }] }, finishReason: 'STOP' }]
+            }
+          });
+        }
+        if (init.headers.Authorization === 'Bearer tok-ov' || acc2Exhausted) {
+          return Response.json(
+            { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'QUOTA_EXHAUSTED' } },
+            { status: 429 }
+          );
+        }
+        return Response.json({
+          response: {
+            candidates: [{ content: { parts: [{ text: 'from-acc2-free' }] }, finishReason: 'STOP' }]
+          }
+        });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const authObj = {
+      type: 'api',
+      key: '1//03overage',
+      metadata: { accounts: ['pro@gmail.com', 'acc2@gmail.com'] }
+    };
+
+    // Usage card surfaces AI Credits balance with aside: true.
+    const defaultPlugin = await AntigravityPlugin({}, {
+      antigravity: { dataDir: dir },
+      fetchFn: poolFetchFn,
+      rateLimitRetries: 0
+    });
+    const usageCard = await defaultPlugin.auth.usage(async () => authObj);
+    const creditWin = usageCard.windows.find(w => w.name === 'AI Credits' && w.pool === 'Google One AI');
+    assert.ok(creditWin);
+    assert.equal(creditWin.aside, true);
+    assert.match(creditWin.display, /120/);
+
+    // Default allowOverages=false never injects enabledCreditTypes even when all accounts are QUOTA_EXHAUSTED.
+    acc2Exhausted = true;
+    calls.length = 0;
+    const defaultLoader = await defaultPlugin.auth.loader(async () => authObj);
+    const offRes = await defaultLoader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-opus-5-5-high', messages: [{ role: 'user', content: 'hi' }] })
+    });
+    assert.equal(offRes.status, 429);
+    assert.equal(calls.some(c => Array.isArray(c.enabledCreditTypes)), false);
+
+    // With allowOverages=true: free quota pool (acc2) is still preferred before spending AI Credits.
+    const overPlugin = await AntigravityPlugin({}, {
+      antigravity: { dataDir: dir, allowOverages: true },
+      fetchFn: poolFetchFn,
+      rateLimitRetries: 0
+    });
+    const overLoader = await overPlugin.auth.loader(async () => authObj);
+    acc2Exhausted = false;
+    calls.length = 0;
+    const freeRes = await overLoader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-opus-5-5-high', messages: [{ role: 'user', content: 'free first' }] })
+    });
+    assert.equal(freeRes.status, 200);
+    assert.equal((await freeRes.json()).choices[0].message.content, 'from-acc2-free');
+    assert.equal(calls.some(c => Array.isArray(c.enabledCreditTypes)), false);
+
+    // When both accounts exhaust free quota, fallback injects enabledCreditTypes: ['GOOGLE_ONE_AI'] and succeeds.
+    acc2Exhausted = true;
+    calls.length = 0;
+    const overRes = await overLoader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-opus-5-5-high', messages: [{ role: 'user', content: 'spend credits' }] })
+    });
+    assert.equal(overRes.status, 200);
+    assert.equal((await overRes.json()).choices[0].message.content, 'from-ai-credits');
+    const creditCalls = calls.filter(c => Array.isArray(c.enabledCreditTypes));
+    assert.equal(creditCalls.length, 1);
+    assert.deepEqual(creditCalls[0].enabledCreditTypes, ['GOOGLE_ONE_AI']);
+
+    // When credits fail with insufficient balance, both eligible accounts enter 5h AICredits cooldown and next call skips credits.
+    overageBehavior = 'exhaust';
+    calls.length = 0;
+    const exhaustRes = await overLoader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-opus-5-5-high', messages: [{ role: 'user', content: 'drain' }] })
+    });
+    assert.equal(exhaustRes.status, 429);
+    assert.equal(calls.some(c => Array.isArray(c.enabledCreditTypes)), true);
+
+    calls.length = 0;
+    const cooledRes = await overLoader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-opus-5-5-high', messages: [{ role: 'user', content: 'after cooldown' }] })
+    });
+    assert.equal(cooledRes.status, 429);
+    assert.equal(calls.some(c => Array.isArray(c.enabledCreditTypes)), false);
+
+    // Below minimumCreditAmountForUsage skips overage injection upfront.
+    const lowDir = makeTempDir();
+    saveAntigravityAccount({
+      id: 'low@gmail.com',
+      email: 'low@gmail.com',
+      refreshToken: '1//03low',
+      accessToken: 'tok-low',
+      expiresAt: Date.now() + 3600_000,
+      clientType: 'personal',
+      projectId: 'proj-low',
+      availableCredits: [{ creditType: 'GOOGLE_ONE_AI', creditAmount: 2, minimumCreditAmountForUsage: 5 }]
+    }, lowDir);
+    const lowCalls = [];
+    const lowPlugin = await AntigravityPlugin({}, {
+      antigravity: { dataDir: lowDir, allowOverages: true },
+      fetchFn: async (url, init) => {
+        if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+        if (url.includes(':generateContent')) {
+          lowCalls.push(JSON.parse(init.body));
+          return Response.json(
+            { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'QUOTA_EXHAUSTED' } },
+            { status: 429 }
+          );
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      },
+      rateLimitRetries: 0
+    });
+    const lowLoader = await lowPlugin.auth.loader(async () => ({
+      type: 'api',
+      key: '1//03low',
+      metadata: { account: 'low@gmail.com' }
+    }));
+    const lowRes = await lowLoader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-opus-5-5-high', messages: [{ role: 'user', content: 'min threshold' }] })
+    });
+    assert.equal(lowRes.status, 429);
+    assert.equal(lowCalls.some(b => Array.isArray(b.enabledCreditTypes)), false);
   });
 });
