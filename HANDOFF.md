@@ -162,10 +162,12 @@ Google `v1internal` 网关会对请求头、JSON 拓扑及 Prompt 文本执行�
 | `allowTools` / `allowImages` / `imageModels` | — | `true` | 是否启用工具调用、图片输入与生图模型 |
 | `contextLimit` / `outputLimit` | — | 上游模型上限 | 手动限制上报给客户端的最大上下文 / 最大输出 token |
 | `requestTimeoutMs` / `modelTimeoutMs` | — | `570000` / `15000` | 单次生成超时（9.5 分钟）与模型目录拉取超时 |
+| `emptyReplyMaxWaitMs` / `emptyReplyRetryDelayMs` | `ANTIGRAVITY_EMPTY_REPLY_MAX_WAIT_MS` / `ANTIGRAVITY_EMPTY_REPLY_RETRY_DELAY_MS` | `0` / `1500` | HTTP 200 空候选（`candidatesTokenCount = 0`）优雅重连时间上限（`0` 关闭自动重发，设为如 `15000` 开启流式首字门控+时间受限重试，超时返回 `502`）与退避间隔 |
+| `streamIdleTimeoutMs` | `ANTIGRAVITY_STREAM_IDLE_TIMEOUT_MS` | `0` | 流式 SSE 分片间最大空闲超时毫秒数（`0` 关闭；设为如 `60000` 可在假死时及时以 `504` 止损） |
 | `compactPrompt` | `ANTIGRAVITY_COMPACT_PROMPT` | `false` (`1`/`true` 开启) | 激进精简：剥离系统提示词中的 `<example>` 块并将默认工具预算收紧至 `12000` |
 | `toolTokenBudget` | `ANTIGRAVITY_TOOL_TOKEN_BUDGET` | `18000`（`compactPrompt` 下 `12000`） | 工具 Schema 描述 token 预算上限；设为 `0` 或 `off` 可完全关闭裁剪 |
 | `failoverOnError` | `ANTIGRAVITY_FAILOVER` | `true` (`0`/`false`/`off` 关闭) | 单账号报错（`429`/`503`/`403`/`401`）时是否同请求自动轮换至下一账号 |
-| — | `ANTIGRAVITY_INSTALL_DIR` | 自动探测常见系统安装路径 | 指定本机官方 Antigravity 客户端目录供 Option A（`--local-only`）扫描提取指纹 |
+| — | `ANTIGRAVITY_INSTALL_DIR` / `ANTIGRAVITY_IDE_INSTALL_DIR` | 自动探测常见系统安装路径 | 分别指定本机 Antigravity Hub 与 Antigravity IDE 目录供扫描提取 `(version, cl)` 与 `oauthUserAgent` |
 | — | `ANTIGRAVITY_HUB_VERSION` / `ANTIGRAVITY_HUB_CL` / `ANTIGRAVITY_OAUTH_USER_AGENT` | `hub-version.json` 缓存或内置基线 | 覆盖出站 Hub UA（必须成对设置 Version 与 CL 才生效）与 OAuth 刷新 UA |
 | — | `ANTIGRAVITY_NORMALIZE_IDENTITY` | 默认开启（`0`/`false` 关闭） | 是否将第三方 Agent 身份重写为 Antigravity（即使关闭仍会剥离 WAF 计费头） |
 
@@ -203,5 +205,5 @@ npm run antigravity:smoke -- --model gemini-3.8-flash-low      # 发送最小连
 ### 后续接手可重点关注的方向
 1. **跟踪新版本日志验证缓存收敛**：用户升级到包含 `169cfab` + `32f3ca4` 的版本后，如提供新的 Magpie 请求 CSV，优先核查主会话是否不再高频跌回 `60,611`，并区分「后端副本未命中」与「客户端主动截断历史（`dtot < 0`）」。
 2. **`auto_mode_check_inferred` 成本治理**：若日志中 `auto_mode_check_inferred` 仍占高额未命中开销（因其请求体由客户端拼装滑动窗口摘要），可协助用户在 Magpie 路由层将该类请求路由到免费/低成本 Flash 模型，或在客户端侧调整 Auto Mode 检查策略。
-3. **长上下文空回复（HTTP 200 但 `candidatesTokenCount = 0`）优雅自愈**：目前非流式/流式若上游偶发返回空候选但带 `usageMetadata`，Magpie 宿主会判定 `502 an empty reply` 并整包重发。后续如需优化，可在 `forwardAntigravity` 非流式或首包未出字阶段评估安全的轻量判断，但需极其谨慎以避免重复计费或破坏幂等性。
+3. **长上下文空回复优雅自愈（已支持可配置时间门控）**：已新增 `emptyReplyMaxWaitMs`（`ANTIGRAVITY_EMPTY_REPLY_MAX_WAIT_MS`）、`emptyReplyRetryDelayMs` 与 `streamIdleTimeoutMs`（`ANTIGRAVITY_STREAM_IDLE_TIMEOUT_MS`）。默认保持 `0` 以避免未经授权的重复扣费；开启后在发送首个实质内容分片前门控空候选并在限定时间窗内退避/切号恢复。
 4. **上游 WAF 规则持续同步**：若后续出现剩余额度充足却报裸 `429 Resource has been exhausted` 的新客户端 Prompt（例如新版 Cursor / Claude Code 新增段落），优先对照 `magpie-community/plugins/packages/agy-cli` 与 `DylanLIiii/opencode-antigravity-bridge/cloak.mjs` 在 `lib/antigravity-mapper.mjs` 的 `CLOAK_REWRITES` 中增补等价改写并补充单测。

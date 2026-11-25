@@ -670,4 +670,80 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
     assert.match(content, /syncHubVersionFromOfficial/);
     assert.match(content, /lib\/antigravity-ua\.json/);
   });
+
+  it('enriches Hub fingerprint with OAuth UA from co-installed IDE root and optional IDE tar stream', async () => {
+    const hubDir = makeTempDir('magpie-hub-only-');
+    const ideDir = makeTempDir('magpie-ide-only-');
+    const dataDir = makeTempDir('magpie-cross-root-data-');
+
+    const hubAppDir = path.join(hubDir, 'resources', 'app');
+    const hubBinDir = path.join(hubDir, 'resources', 'bin');
+    fs.mkdirSync(hubAppDir, { recursive: true });
+    fs.mkdirSync(hubBinDir, { recursive: true });
+    fs.writeFileSync(path.join(hubAppDir, 'package.json'), JSON.stringify({
+      name: 'antigravity',
+      version: '2.35.1'
+    }) + '\n', 'utf8');
+    fs.writeFileSync(
+      path.join(hubBinDir, 'language_server.exe'),
+      Buffer.from('noise\0changelist 1029194470 with baseline 1027784732 in a mint client based on //depot/branches/antigravity_web_release_branch/main.go\0', 'utf8')
+    );
+
+    const ideAppDir = path.join(ideDir, 'resources', 'app');
+    fs.mkdirSync(ideAppDir, { recursive: true });
+    fs.writeFileSync(path.join(ideAppDir, 'product.json'), JSON.stringify({
+      nameShort: 'Antigravity',
+      version: '4.5.2',
+      ideVersion: '4.5.2',
+      vscodeVersion: '1.101.0'
+    }) + '\n', 'utf8');
+
+    const localDetected = detectLocalAntigravityFingerprint({
+      dataDir,
+      installDir: hubDir,
+      env: { ANTIGRAVITY_IDE_INSTALL_DIR: ideDir },
+      persist: true
+    });
+    assert.ok(localDetected);
+    assert.equal(localDetected.version, '2.35.1');
+    assert.equal(localDetected.cl, '1029194470');
+    assert.equal(localDetected.oauthUserAgent, 'vscode/1.101.0 (Antigravity/4.5.2)');
+
+    const hubUrl = 'https://storage.googleapis.com/antigravity-public/antigravity-hub/2.39.0-99999/linux-x64/Antigravity.tar.gz';
+    const ideUrl = 'https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/2.9.0-123456/linux-x64/Antigravity%20IDE.tar.gz';
+    const html = `<a href="${hubUrl}">Hub</a><a href="${ideUrl}">IDE</a>`;
+    const parsedPage = parseOfficialDownloadPage(html);
+    assert.equal(parsedPage?.idePreferredUrl, ideUrl);
+
+    const hubTarGz = buildTarGzArchive([
+      {
+        name: 'Antigravity/resources/app/package.json',
+        content: JSON.stringify({ name: 'antigravity', version: '2.39.0' })
+      },
+      {
+        name: 'Antigravity/language_server_linux_x64',
+        content: Buffer.from('noise\0antigravity/hub/2.39.0 (aidev_client; os_type=linux; arch=amd64; cl=1088000777)\0', 'utf8')
+      }
+    ]);
+    const ideTarGz = buildTarGzArchive([
+      {
+        name: 'Antigravity IDE/resources/app/product.json',
+        content: JSON.stringify({ nameShort: 'Antigravity', version: '4.6.1', vscodeVersion: '1.102.0' })
+      }
+    ]);
+
+    const synced = await syncHubVersionFromOfficial({
+      dataDir: makeTempDir('magpie-ide-sync-data-'),
+      syncIdeOAuthUa: true,
+      fetchFn: async url => {
+        if (url === 'https://antigravity.google/download') return new Response(html, { status: 200 });
+        if (url === hubUrl) return new Response(hubTarGz, { status: 200 });
+        if (url === ideUrl) return new Response(ideTarGz, { status: 200 });
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    assert.equal(synced.version, '2.39.0');
+    assert.equal(synced.cl, '1088000777');
+    assert.equal(synced.oauthUserAgent, 'vscode/1.102.0 (Antigravity/4.6.1)');
+  });
 });

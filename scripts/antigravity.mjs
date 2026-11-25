@@ -31,7 +31,7 @@ const USAGE_TEXT = `Usage: node scripts/antigravity.mjs <command> [options]
 
 Commands:
   status                                    Show data dir, effective User-Agents, cache status, and accounts
-  sync-ua [--proxy http://...] [--install-dir <path>] [--local-only] [--remote] [--manifest-url <url>]
+  sync-ua [--proxy http://...] [--install-dir <path>] [--local-only] [--remote] [--manifest-url <url>] [--with-oauth-ua]
                                             Sync paired Hub version/CL from official download, remote manifest, or local install
   oauth --client-id <id> --client-secret <secret> [--type personal|enterprise]
                                             Save OAuth client credentials
@@ -62,6 +62,7 @@ function parseArgs(argv) {
     else if (a.startsWith('--manifest-url=')) flags.manifestUrl = a.slice('--manifest-url='.length);
     else if (a === '--local-only') flags.localOnly = true;
     else if (a === '--remote') flags.remote = true;
+    else if (a === '--with-oauth-ua') flags.withOAuthUa = true;
     else if (a === '--help' || a === '-h') flags.help = true;
     else positional.push(a);
   }
@@ -171,7 +172,8 @@ async function main() {
     try {
       synced = await syncHubVersionFromOfficial({
         dataDir,
-        proxy: opts.proxy || undefined
+        proxy: opts.proxy || undefined,
+        ...(flags.withOAuthUa ? { syncIdeOAuthUa: true, timeoutMs: 90000 } : {})
       });
     } catch (err) {
       console.error(`Failed to sync Antigravity User-Agent from official download page: ${err?.message || err}`);

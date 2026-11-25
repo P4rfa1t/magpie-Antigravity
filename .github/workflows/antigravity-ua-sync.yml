@@ -42,7 +42,8 @@ jobs:
 
           const extracted = await syncHubVersionFromOfficial({
             persist: false,
-            timeoutMs: 60000
+            syncIdeOAuthUa: true,
+            timeoutMs: 90000
           });
 
           const cmp = compareHubVersions(extracted.version, current.version);

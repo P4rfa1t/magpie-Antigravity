@@ -1180,4 +1180,175 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
       targetServer.close();
     }
   });
+
+  it('retries HTTP 200 empty candidates within custom emptyReplyMaxWaitMs and enforces streamIdleTimeoutMs', async () => {
+    assert.throws(() => antigravitySettings({ antigravity: { emptyReplyMaxWaitMs: -1 } }));
+    assert.throws(() => antigravitySettings({ antigravity: { streamIdleTimeoutMs: 'bad' } }));
+    assert.throws(() => antigravitySettings({ antigravity: { emptyReplyRetryDelayMs: -5 } }));
+
+    // 1. Non-streaming: 1 empty 200 (candidatesTokenCount = 0) followed by healthy answer within budget.
+    const dir1 = makeTempDir();
+    saveAntigravityAccount({
+      id: 'empty1@gmail.com',
+      email: 'empty1@gmail.com',
+      refreshToken: '1//03empty1',
+      accessToken: 'tok-empty1',
+      expiresAt: Date.now() + 3600000,
+      clientType: 'personal',
+      projectId: 'aicode-consumers'
+    }, dir1);
+    let nonStreamCalls = 0;
+    const plugin1 = await AntigravityPlugin({}, {
+      antigravity: {
+        dataDir: dir1,
+        clientId: 'test-personal-id',
+        clientSecret: 'test-personal-secret',
+        emptyReplyMaxWaitMs: 2000,
+        emptyReplyRetryDelayMs: 10
+      },
+      fetchFn: async url => {
+        if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+        if (url.includes(':generateContent')) {
+          nonStreamCalls += 1;
+          if (nonStreamCalls === 1) {
+            return Response.json({
+              response: {
+                candidates: [{ content: { parts: [] }, finishReason: 'STOP' }],
+                usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 0, totalTokenCount: 100 }
+              }
+            });
+          }
+          return Response.json({
+            response: {
+              candidates: [{ content: { parts: [{ text: 'recovered-after-empty' }] }, finishReason: 'STOP' }],
+              usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 4, totalTokenCount: 104 }
+            }
+          });
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    const loader1 = await plugin1.auth.loader(async () => ({
+      type: 'api',
+      key: '1//03empty1',
+      metadata: { mode: 'antigravity', account: 'empty1@gmail.com' }
+    }));
+    const okRes = await loader1.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-hydrogen', messages: [{ role: 'user', content: 'hi' }], stream: false })
+    });
+    assert.equal(okRes.status, 200);
+    assert.equal(nonStreamCalls, 2);
+    assert.equal((await okRes.json()).choices[0].message.content, 'recovered-after-empty');
+
+    // 2. Streaming: empty SSE stream recovers cleanly before writing anything to caller,
+    //    and stops with explicit 502 once custom emptyReplyMaxWaitMs budget expires.
+    let streamCalls = 0;
+    const encoder = new TextEncoder();
+    const plugin2 = await AntigravityPlugin({}, {
+      antigravity: {
+        dataDir: dir1,
+        clientId: 'test-personal-id',
+        clientSecret: 'test-personal-secret',
+        emptyReplyMaxWaitMs: 3000,
+        emptyReplyRetryDelayMs: 10
+      },
+      fetchFn: async url => {
+        if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+        if (url.includes(':streamGenerateContent')) {
+          streamCalls += 1;
+          const payload = streamCalls === 1
+            ? 'data: {"response":{"candidates":[{"content":{"parts":[]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":50,"candidatesTokenCount":0,"totalTokenCount":50}}}\n\n'
+            : 'data: {"response":{"candidates":[{"content":{"parts":[{"text":"stream-recovered"}]},"finishReason":"STOP"}]}}\n\n';
+          return new Response(new ReadableStream({
+            start(c) {
+              c.enqueue(encoder.encode(payload));
+              c.close();
+            }
+          }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    const loader2 = await plugin2.auth.loader(async () => ({
+      type: 'api',
+      key: '1//03empty1',
+      metadata: { mode: 'antigravity', account: 'empty1@gmail.com' }
+    }));
+    const streamRes = await loader2.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-hydrogen', messages: [{ role: 'user', content: 'hi' }], stream: true })
+    });
+    assert.equal(streamRes.status, 200);
+    assert.equal(streamCalls, 2);
+    const streamText = await streamRes.text();
+    assert.ok(streamText.includes('stream-recovered'));
+
+    // Budget exhaustion stops retrying cleanly and returns 502 naming emptyReplyMaxWaitMs.
+    const pluginExhaust = await AntigravityPlugin({}, {
+      antigravity: {
+        dataDir: dir1,
+        clientId: 'test-personal-id',
+        clientSecret: 'test-personal-secret',
+        emptyReplyMaxWaitMs: 25,
+        emptyReplyRetryDelayMs: 20
+      },
+      fetchFn: async url => {
+        if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+        if (url.includes(':generateContent')) {
+          return Response.json({
+            response: { candidates: [{ content: { parts: [] }, finishReason: 'STOP' }] }
+          });
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    const loaderExhaust = await pluginExhaust.auth.loader(async () => ({
+      type: 'api',
+      key: '1//03empty1',
+      metadata: { mode: 'antigravity', account: 'empty1@gmail.com' }
+    }));
+    const exhaustRes = await loaderExhaust.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-hydrogen', messages: [{ role: 'user', content: 'hi' }], stream: false })
+    });
+    assert.equal(exhaustRes.status, 502);
+    assert.match(await exhaustRes.text(), /emptyReplyMaxWaitMs=25/);
+
+    // 3. streamIdleTimeoutMs aborts hung SSE streams with HTTP 504 instead of waiting for full requestTimeoutMs.
+    const pluginIdle = await AntigravityPlugin({}, {
+      antigravity: {
+        dataDir: dir1,
+        clientId: 'test-personal-id',
+        clientSecret: 'test-personal-secret',
+        emptyReplyMaxWaitMs: 500,
+        streamIdleTimeoutMs: 40
+      },
+      fetchFn: async url => {
+        if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+        if (url.includes(':streamGenerateContent')) {
+          return new Response(new ReadableStream({
+            start() {},
+            cancel() {}
+          }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    const loaderIdle = await pluginIdle.auth.loader(async () => ({
+      type: 'api',
+      key: '1//03empty1',
+      metadata: { mode: 'antigravity', account: 'empty1@gmail.com' }
+    }));
+    const idleRes = await loaderIdle.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-hydrogen', messages: [{ role: 'user', content: 'hi' }], stream: true })
+    });
+    assert.equal(idleRes.status, 504);
+    assert.match(await idleRes.text(), /idle timed out/i);
+  });
 });
