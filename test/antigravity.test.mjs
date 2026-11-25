@@ -1351,4 +1351,60 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     assert.equal(idleRes.status, 504);
     assert.match(await idleRes.text(), /idle timed out/i);
   });
+
+  it('provisions personal projectId via :onboardUser (including LRO polling) and falls back cleanly on precondition errors', async () => {
+    const dir = makeTempDir();
+    let pollCalls = 0;
+    const provisioned = await verifyRefreshToken('1//03onboard', {
+      dataDir: dir,
+      clientId: 'test-personal-id',
+      clientSecret: 'test-personal-secret',
+      pollIntervalMs: 5,
+      maxPollAttempts: 3,
+      fetchFn: async url => {
+        if (url.includes('oauth2.googleapis.com/token')) return Response.json({ access_token: 'tok-onboard', expires_in: 3600 });
+        if (url.includes('/userinfo')) return Response.json({ email: 'freshuser@gmail.com' });
+        if (url.includes(':loadCodeAssist')) {
+          return Response.json({
+            allowedTiers: [
+              { id: 'free-tier', isDefault: true },
+              { id: 'standard-tier' }
+            ]
+          });
+        }
+        if (url.includes(':onboardUser')) {
+          return Response.json({ name: 'operations/onboard-123', done: false });
+        }
+        if (url.includes('/operations/onboard-123')) {
+          pollCalls += 1;
+          if (pollCalls < 2) return Response.json({ name: 'operations/onboard-123', done: false });
+          return Response.json({
+            name: 'operations/onboard-123',
+            done: true,
+            response: { cloudaicompanionProject: { id: 'personal-proj-789' } }
+          });
+        }
+        if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    assert.equal(pollCalls, 2);
+    assert.equal(provisioned.projectId, 'personal-proj-789');
+
+    // Fallback cleanly to DEFAULT_FALLBACK_PROJECT_ID if :onboardUser fails precondition check.
+    const fallbackAcc = await verifyRefreshToken('1//03onboardfail', {
+      dataDir: dir,
+      clientId: 'test-personal-id',
+      clientSecret: 'test-personal-secret',
+      fetchFn: async url => {
+        if (url.includes('oauth2.googleapis.com/token')) return Response.json({ access_token: 'tok-fail', expires_in: 3600 });
+        if (url.includes('/userinfo')) return Response.json({ email: 'blocked@gmail.com' });
+        if (url.includes(':loadCodeAssist')) return Response.json({ allowedTiers: [{ id: 'free-tier', isDefault: true }] });
+        if (url.includes(':onboardUser')) return Response.json({ error: { code: 400, message: 'FAILED_PRECONDITION' } }, { status: 400 });
+        if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    assert.equal(fallbackAcc.projectId, 'bamboo-precept-lgxtn');
+  });
 });

@@ -43,7 +43,7 @@ jobs:
           const extracted = await syncHubVersionFromOfficial({
             persist: false,
             syncIdeOAuthUa: true,
-            timeoutMs: 90000
+            timeoutMs: 120000
           });
 
           const cmp = compareHubVersions(extracted.version, current.version);
@@ -53,13 +53,14 @@ jobs:
             process.exit(0);
           }
 
+          const resolvedOAuth = extracted.oauthUserAgent || current.oauthUserAgent || undefined;
           const samePair =
             extracted.version === current.version &&
             extracted.cl === current.cl &&
-            (extracted.oauthUserAgent || undefined) === (current.oauthUserAgent || undefined);
+            resolvedOAuth === (current.oauthUserAgent || undefined);
 
           if (!force && samePair) {
-            console.log(`No change: already at ${current.version} (cl=${current.cl})`);
+            console.log(`No change: already at ${current.version} (cl=${current.cl}, oauth=${resolvedOAuth || 'default'})`);
             fs.appendFileSync(process.env.GITHUB_OUTPUT, 'changed=false\n');
             process.exit(0);
           }
@@ -67,7 +68,7 @@ jobs:
           const next = {
             version: extracted.version,
             cl: extracted.cl,
-            ...(extracted.oauthUserAgent ? { oauthUserAgent: extracted.oauthUserAgent } : {}),
+            ...(resolvedOAuth ? { oauthUserAgent: resolvedOAuth } : {}),
             source: 'official-sync',
             updatedAt: extracted.detectedAt
           };
@@ -76,7 +77,7 @@ jobs:
             process.env.GITHUB_OUTPUT,
             `changed=true\nversion=${next.version}\ncl=${next.cl}\n`
           );
-          console.log(`Updated lib/antigravity-ua.json -> ${next.version} (cl=${next.cl})`);
+          console.log(`Updated lib/antigravity-ua.json -> ${next.version} (cl=${next.cl}, oauth=${resolvedOAuth || 'default'})`);
           JS
       - name: Verify guardrails and UA tests before push
         if: steps.sync.outputs.changed == 'true'

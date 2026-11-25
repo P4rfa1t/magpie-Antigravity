@@ -542,6 +542,7 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
     );
     assert.equal(OFFICIAL_HUB_VERSION, '2.35.1');
     assert.equal(OFFICIAL_HUB_CL, '1029194470');
+    assert.equal(NATIVE_OAUTH_USER_AGENT, 'vscode/1.107.0 (Antigravity/2.8.0)');
     assert.equal(compareHubVersions('2.36.0', '2.35.1'), 1);
     assert.equal(compareHubVersions('2.35.1', '2.35.1'), 0);
     assert.equal(compareHubVersions('2.35.0', '2.35.1'), -1);
@@ -643,6 +644,14 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
     assert.equal(preferBaseline.hubVersion, OFFICIAL_HUB_VERSION);
     assert.equal(preferBaseline.hubCl, OFFICIAL_HUB_CL);
     assert.equal(preferBaseline.source, 'baseline');
+
+    // By default without ANTIGRAVITY_DETECT_LOCAL=1 or ANTIGRAVITY_INSTALL_DIR,
+    // resolveAntigravityUserAgents avoids scanning local install dirs.
+    const noLocalScan = resolveAntigravityUserAgents({
+      dataDir: makeTempDir('magpie-agy-nolocal-'),
+      env: { LOCALAPPDATA: path.dirname(path.dirname(installDir)) }
+    });
+    assert.equal(noLocalScan.source, 'baseline');
 
     // Simulate expired (>24h) official-sync cache while local IDE upgraded to 2.41.0.
     writeCachedHubVersion(dataDir, {

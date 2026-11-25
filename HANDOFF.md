@@ -53,7 +53,7 @@ npm run interrogate -- --run
 - **Token 刷新与双客户端回退 (`ensureFreshAccountToken`)**：提前 15 分钟刷新短期 `access_token`；仅当未绑定已知 `oauthClientKey` 或遇到明确 `unauthorized_client`/`invalid_client` 时才尝试 Personal / Enterprise（GCP）客户端切换（已绑定账号在遇到 `invalid_grant` 时仅对原绑定客户端做一次瞬态重试，不再盲试另一客户端），确认彻底失效后才标记 `invalidGrant: true` 返回 `401`。
 - **上游端点与项目发现**：
   - 主端点：`https://daily-cloudcode-pa.googleapis.com/v1internal`（备用：`https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal`）。
-  - 登录校验时调用 `:loadCodeAssist` 获取真实 `cloudaicompanionProject` 与订阅等级（`FREE` / `PRO` / `ULTRA`）；未返回专属项目或命中占位项目名时回退至官方默认 `bamboo-precept-lgxtn`。
+  - 登录校验时调用 `:loadCodeAssist` 获取真实 `cloudaicompanionProject` 与订阅等级（`FREE` / `PRO` / `ULTRA`）；未返回专属项目时自动调用 `:onboardUser`（含长操作轮询）尝试开通个人 `projectId`，仅当无法开通或受限时回退至官方默认 `bamboo-precept-lgxtn`。
   - 支持 HTTP/HTTPS `CONNECT` 隧道代理（`fetchWithProxy`），Node 运行时下对 HTTPS 目标自动协商 **ALPN `h2`（`node:http2`）** 并在需要时平滑回退 HTTP/1.1；容器环境下（`isContainerEnv`）对 `127.0.0.1` 给出 `host.docker.internal` 提示。
 
 ### 3.2 Magpie 供应商契约、模型目录与额度展示 (`lib/antigravity.mjs`)
@@ -167,7 +167,7 @@ Google `v1internal` 网关会对请求头、JSON 拓扑及 Prompt 文本执行�
 | `compactPrompt` | `ANTIGRAVITY_COMPACT_PROMPT` | `false` (`1`/`true` 开启) | 激进精简：剥离系统提示词中的 `<example>` 块并将默认工具预算收紧至 `12000` |
 | `toolTokenBudget` | `ANTIGRAVITY_TOOL_TOKEN_BUDGET` | `18000`（`compactPrompt` 下 `12000`） | 工具 Schema 描述 token 预算上限；设为 `0` 或 `off` 可完全关闭裁剪 |
 | `failoverOnError` | `ANTIGRAVITY_FAILOVER` | `true` (`0`/`false`/`off` 关闭) | 单账号报错（`429`/`503`/`403`/`401`）时是否同请求自动轮换至下一账号 |
-| — | `ANTIGRAVITY_INSTALL_DIR` / `ANTIGRAVITY_IDE_INSTALL_DIR` | 自动探测常见系统安装路径 | 分别指定本机 Antigravity Hub 与 Antigravity IDE 目录供扫描提取 `(version, cl)` 与 `oauthUserAgent` |
+| — | `ANTIGRAVITY_DETECT_LOCAL` / `ANTIGRAVITY_INSTALL_DIR` / `ANTIGRAVITY_IDE_INSTALL_DIR` | 默认关闭本机扫描（优先走 GitHub Actions + `lib/antigravity-ua.json`） | 设为 `1`（或指定安装目录 / 传入 `detectLocal: true`）才在运行期扫描本机客户端目录 |
 | — | `ANTIGRAVITY_HUB_VERSION` / `ANTIGRAVITY_HUB_CL` / `ANTIGRAVITY_OAUTH_USER_AGENT` | `hub-version.json` 缓存或内置基线 | 覆盖出站 Hub UA（必须成对设置 Version 与 CL 才生效）与 OAuth 刷新 UA |
 | — | `ANTIGRAVITY_NORMALIZE_IDENTITY` | 默认开启（`0`/`false` 关闭） | 是否将第三方 Agent 身份重写为 Antigravity（即使关闭仍会剥离 WAF 计费头） |
 
