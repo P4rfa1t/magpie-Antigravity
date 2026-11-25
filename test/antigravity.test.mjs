@@ -1,10 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import http2 from 'node:http2';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { GeminiWebPlugin, AntigravityPlugin } from '../index.mjs';
 import {
   GCP_OAUTH_CLIENT,
@@ -40,11 +43,14 @@ import {
 import {
   ANTIGRAVITY_BASE,
   ANTIGRAVITY_ID,
+  KNOWN_MODEL_LIMITS,
   antigravitySettings,
   buildAntigravityModels,
+  classifyAntigravityError,
   isBareAntigravity429,
   isModelCapacityExhaustedError,
   isQuotaExhausted429,
+  listAntigravityModels,
   loadSignatureStore,
   shouldMarkCreditsExhausted
 } from '../lib/antigravity.mjs';
@@ -453,15 +459,13 @@ describe('Antigravity OpenAI <-> v1internal mapping', () => {
     }, { catalog: SAMPLE_CATALOG, projectId: 'aicode-consumers', email: 'u@gmail.com', sessionId: 'cc-sess' });
 
     assert.equal(targetModel, 'gemini-4-hydrogen-high');
-    // Outbound systemInstruction keeps official identity + static silence boundary; full directives are sideloaded into contents[0].
+    // Outbound systemInstruction keeps pure official identity by default; full directives are sideloaded into contents[0].
     assert.deepEqual(envelope.request.systemInstruction, {
       role: 'user',
-      parts: [
-        { text: OFFICIAL_ANTIGRAVITY_IDENTITY },
-        { text: buildSilenceBoundaryText('gemini-4-hydrogen-high', SAMPLE_CATALOG.models['gemini-4-hydrogen-high']) }
-      ]
+      parts: [{ text: OFFICIAL_ANTIGRAVITY_IDENTITY }]
     });
-    assert.equal(envelope.request.contents[0].parts[0].text.startsWith('<system-instruction priority="critical" role="developer">'), true);
+    assert.equal(envelope.request.contents[0].parts[0].text.startsWith('<instructions>\n'), true);
+    assert.equal(envelope.request.contents[0].parts[0].text.includes('SYSTEM MANDATE'), false);
     assert.ok(envelope.request.contents[0].parts[0].text.includes('Prefer read file, edit file, and write file over cat/sed'));
     assert.ok(!envelope.request.contents[0].parts[0].text.includes('x-anthropic-billing-header'));
     // User <system-reminder> block is sanitized.
@@ -469,7 +473,8 @@ describe('Antigravity OpenAI <-> v1internal mapping', () => {
     assert.ok(!envelope.request.contents[0].parts[1].text.includes('Claude Code'));
     // Tools are expanded one declaration per entry and scrubbed of WAF triggers; fake safetySettings omitted.
     assert.equal(envelope.request.tools.length, 2);
-    assert.ok(envelope.request.tools[0].functionDeclarations[0].description.includes('codem0de'));
+    assert.ok(envelope.request.tools[0].functionDeclarations[0].description.includes('code mode'));
+    assert.equal(envelope.request.tools[0].functionDeclarations[0].description.includes('codem0de'), false);
     assert.ok(envelope.request.tools[0].functionDeclarations[0].parameters.properties.cmd.description.includes('Prefer read file, edit file, and write file over cat/sed'));
     assert.equal(envelope.request.safetySettings, undefined);
     assert.equal(envelope.request.labels.model_enum, 'MODEL_PLACEHOLDER_M522');
@@ -618,6 +623,21 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     const genCall = requestLog.find(r => r.url.includes(':generateContent') && r.headers.Authorization === 'Bearer tok2');
     assert.equal(genCall.headers['anthropic-beta'], undefined);
     assert.equal(genCall.headers['x-goog-user-project'], undefined); // consumer aicode-consumers stripped
+
+    // Anti-correlation: failover across accounts must never reuse conv UUID or trajectory_id.
+    const gen1 = requestLog.find(r => r.url.includes(':generateContent') && r.headers.Authorization === 'Bearer tok1');
+    assert.ok(gen1 && genCall);
+    const body1 = JSON.parse(gen1.body);
+    const body2 = JSON.parse(genCall.body);
+    assert.notEqual(body1.request.sessionId, body2.request.sessionId);
+    assert.notEqual(body1.requestId.split('/')[1], body2.requestId.split('/')[1]);
+    assert.notEqual(body1.requestId.split('/')[3], body2.requestId.split('/')[3]);
+    assert.notEqual(body1.request.labels.trajectory_id, body2.request.labels.trajectory_id);
+
+    // OAuth /userinfo must carry paired OAuth User-Agent (never leak default runtime UA).
+    const userInfoCall = requestLog.find(r => r.url.includes('/userinfo'));
+    assert.ok(userInfoCall);
+    assert.equal(userInfoCall.headers['User-Agent'], currentOAuthUserAgent({ dataDir: dir }));
   });
 
   it('prompts for OAuth client_id/client_secret when unconfigured and persists embedded JSON credentials', async () => {
@@ -677,7 +697,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     };
 
     const plugin = await AntigravityPlugin({}, {
-      antigravity: { dataDir: dir, clientId: 'cid', clientSecret: 'csec' },
+      antigravity: { dataDir: dir, clientId: 'cid', clientSecret: 'csec', sandboxFallback: true },
       rateLimitBackoffMs: 5,
       rateLimitRetries: 1,
       fetchFn
@@ -754,7 +774,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     };
 
     const plugin = await AntigravityPlugin({}, {
-      antigravity: { dataDir: dir, clientId: 'cid', clientSecret: 'csec' },
+      antigravity: { dataDir: dir, clientId: 'cid', clientSecret: 'csec', sandboxFallback: true },
       rateLimitBackoffMs: 5,
       rateLimitRetries: 1,
       fetchFn
@@ -1419,13 +1439,33 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     assert.equal(fallbackAcc.projectId, 'bamboo-precept-lgxtn');
   });
 
-  it('disables telemetry via :setUserSettings and verifies via :fetchUserInfo on login', async () => {
+  it('keeps privacy calls opt-in (autoPrivacy) and omits gl-node X-Goog-Api-Client header', async () => {
     const dir = makeTempDir();
+    // Default verifyRefreshToken does not touch :setUserSettings or :fetchUserInfo.
+    const defaultUrls = [];
+    const defaultVerified = await verifyRefreshToken('1//03defaultpriv', {
+      dataDir: dir,
+      clientId: 'test-personal-id',
+      clientSecret: 'test-personal-secret',
+      fetchFn: async url => {
+        defaultUrls.push(url);
+        if (url.includes('oauth2.googleapis.com/token')) return Response.json({ access_token: 'tok-def', expires_in: 3600 });
+        if (url.includes('/userinfo')) return Response.json({ email: 'defpriv@gmail.com' });
+        if (url.includes(':loadCodeAssist')) return Response.json({ cloudaicompanionProject: 'priv-proj-0', currentTier: { id: 'free-tier' } });
+        if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    assert.equal(defaultVerified.privacyMode, undefined);
+    assert.equal(defaultUrls.some(u => u.includes(':setUserSettings') || u.includes(':fetchUserInfo')), false);
+
+    // Explicit autoPrivacy: true disables telemetry cleanly without leaking gl-node X-Goog-Api-Client.
     const calls = [];
     const verified = await verifyRefreshToken('1//03privacy', {
       dataDir: dir,
       clientId: 'test-personal-id',
       clientSecret: 'test-personal-secret',
+      autoPrivacy: true,
       fetchFn: async (url, init) => {
         let parsedBody = null;
         if (typeof init?.body === 'string' && init.body.trim().startsWith('{')) {
@@ -1446,7 +1486,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     const infoCall = calls.find(c => c.url.includes(':fetchUserInfo'));
     assert.ok(setCall);
     assert.deepEqual(setCall.body, { user_settings: {} });
-    assert.equal(setCall.headers['X-Goog-Api-Client'], 'gl-node/22.21.1');
+    assert.equal(setCall.headers['X-Goog-Api-Client'], undefined);
     assert.ok(infoCall);
     assert.deepEqual(infoCall.body, { project: 'priv-proj-1' });
 
@@ -1454,6 +1494,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
       dataDir: dir,
       clientId: 'test-personal-id',
       clientSecret: 'test-personal-secret',
+      autoPrivacy: true,
       fetchFn: async url => {
         if (url.includes('oauth2.googleapis.com/token')) return Response.json({ access_token: 'tok-priv2', expires_in: 3600 });
         if (url.includes('/userinfo')) return Response.json({ email: 'priv2@gmail.com' });
@@ -1729,9 +1770,9 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     assert.deepEqual([...new Set(calledAuths)], ['Bearer tok2']);
   });
 
-  it('injects deterministic silence boundary + model declaration and syncs inference headers with Magpie options', async () => {
-    // 1. Short third-party identity system prompt splits boundary between official identity and trailing instructions.
-    const shortIdentity = openAIToAntigravityRequest({
+  it('keeps silence boundary opt-in by default and syncs inference headers with Magpie options', async () => {
+    // 1. Default omits static silence boundary; opt-in silenceBoundary: true splits boundary between official identity and trailing instructions.
+    const defaultShort = openAIToAntigravityRequest({
       model: 'claude-opus-5-5',
       reasoning_effort: 'high',
       messages: [
@@ -1739,6 +1780,17 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
         { role: 'user', content: 'hello' }
       ]
     }, { catalog: SAMPLE_CATALOG, projectId: 'p1', email: 'u@gmail.com', sessionId: 's1' });
+    assert.equal(defaultShort.envelope.request.systemInstruction.parts.length, 1);
+    assert.equal(defaultShort.envelope.request.systemInstruction.parts[0].text.includes(OFFICIAL_SILENCE_BOUNDARY_PREFIX), false);
+
+    const shortIdentity = openAIToAntigravityRequest({
+      model: 'claude-opus-5-5',
+      reasoning_effort: 'high',
+      messages: [
+        { role: 'system', content: 'You are Claude Code. Help debug tests.' },
+        { role: 'user', content: 'hello' }
+      ]
+    }, { catalog: SAMPLE_CATALOG, projectId: 'p1', email: 'u@gmail.com', sessionId: 's1', silenceBoundary: true });
     assert.equal(shortIdentity.envelope.request.systemInstruction.parts.length, 3);
     assert.equal(shortIdentity.envelope.request.systemInstruction.parts[0].text, OFFICIAL_ANTIGRAVITY_IDENTITY);
     assert.ok(shortIdentity.envelope.request.systemInstruction.parts[1].text.startsWith(OFFICIAL_SILENCE_BOUNDARY_PREFIX));
@@ -1755,7 +1807,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
         { role: 'assistant', content: 'hi' },
         { role: 'user', content: 'next' }
       ]
-    }, { catalog: SAMPLE_CATALOG, projectId: 'p1', email: 'u@gmail.com', sessionId: 's1' });
+    }, { catalog: SAMPLE_CATALOG, projectId: 'p1', email: 'u@gmail.com', sessionId: 's1', silenceBoundary: true });
     assert.deepEqual(nextTurn.envelope.request.systemInstruction, shortIdentity.envelope.request.systemInstruction);
 
     const disabledBoundary = openAIToAntigravityRequest({
@@ -1775,6 +1827,8 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     const coexisting = await GeminiWebPlugin({}, {
       antigravity: {
         silenceBoundary: false,
+        sandboxFallback: false,
+        autoPrivacy: false,
         userProjectHeader: 'never',
         claudeBetaHeader: ''
       }
@@ -2055,5 +2109,237 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     });
     assert.equal(lowRes.status, 429);
     assert.equal(lowCalls.some(b => Array.isArray(b.enabledCreditTypes)), false);
+  });
+
+  it('skips sandbox probing by default, fetches multi-account usage sequentially, and aligns Gemini-native tool packing', async () => {
+    // 1. Default sandboxFallback=false never hits sandbox.googleapis.com on primary 429.
+    const dir = makeTempDir();
+    for (const [id, tok] of [['seq1@gmail.com', 'tok-seq1'], ['seq2@gmail.com', 'tok-seq2']]) {
+      saveAntigravityAccount({
+        id,
+        email: id,
+        refreshToken: `1//03${tok}`,
+        accessToken: tok,
+        expiresAt: Date.now() + 3600_000,
+        clientType: 'personal',
+        projectId: 'proj-seq'
+      }, dir);
+    }
+
+    const hitUrls = [];
+    let inFlightUsage = 0;
+    let maxConcurrentUsage = 0;
+    const fetchFn = async url => {
+      hitUrls.push(url);
+      if (url.includes(':retrieveUserQuotaSummary') || url.includes(':fetchAvailableModels')) {
+        inFlightUsage += 1;
+        maxConcurrentUsage = Math.max(maxConcurrentUsage, inFlightUsage);
+        await new Promise(r => setTimeout(r, 15));
+        inFlightUsage -= 1;
+        if (url.includes(':retrieveUserQuotaSummary')) {
+          return Response.json({
+            groups: [{ displayName: 'Gemini Models', buckets: [{ window: '5h', remainingFraction: 0.8 }] }]
+          });
+        }
+        return Response.json(SAMPLE_CATALOG);
+      }
+      if (url.includes(':generateContent')) {
+        return Response.json({ error: { code: 429, message: 'RESOURCE_EXHAUSTED' } }, { status: 429 });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const plugin = await AntigravityPlugin({}, {
+      antigravity: { dataDir: dir },
+      fetchFn,
+      rateLimitRetries: 0,
+      usageDelayMs: 5
+    });
+    const authObj = {
+      type: 'api',
+      key: '1//03tok-seq1',
+      metadata: { accounts: ['seq1@gmail.com', 'seq2@gmail.com'] }
+    };
+    const usageCard = await plugin.auth.usage(async () => authObj);
+    assert.ok(usageCard.windows.length > 0);
+    assert.equal(maxConcurrentUsage, 1);
+
+    const loader = await plugin.auth.loader(async () => authObj);
+    const res = await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-hydrogen', messages: [{ role: 'user', content: 'hi' }] })
+    });
+    assert.equal(res.status, 429);
+    assert.equal(hitUrls.some(u => u.includes('sandbox.googleapis.com')), false);
+
+    // 2. Gemini-native tools expand one functionDeclaration per entry, matching OpenAI path.
+    const wrapped = wrapGeminiNativeRequest({
+      contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+      tools: [{
+        functionDeclarations: [
+          { name: 'tool_a', parameters: { type: 'object', properties: {} } },
+          { name: 'tool_b', parameters: { type: 'object', properties: {} } }
+        ]
+      }]
+    }, { targetModel: 'gemini-4-hydrogen-high', projectId: 'p1', sessionId: 's-native' });
+    assert.equal(wrapped.request.tools.length, 2);
+    assert.equal(wrapped.request.tools[0].functionDeclarations.length, 1);
+    assert.equal(wrapped.request.tools[1].functionDeclarations.length, 1);
+  });
+
+  it('reuses pooled HTTP/2 sessions and decodes gzip responses for direct HTTPS and CONNECT proxy under Node', async t => {
+    const certDir = makeTempDir();
+    const keyPath = path.join(certDir, 'key.pem');
+    const certPath = path.join(certDir, 'cert.pem');
+    try {
+      execFileSync('openssl', [
+        'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+        '-keyout', keyPath, '-out', certPath,
+        '-days', '1', '-subj', '/CN=127.0.0.1'
+      ], { stdio: 'ignore' });
+    } catch {
+      t.skip('openssl not available for ephemeral TLS test cert');
+      return;
+    }
+
+    const key = fs.readFileSync(keyPath);
+    const cert = fs.readFileSync(certPath);
+    let h2SessionCount = 0;
+    const h2Server = http2.createSecureServer({ key, cert, allowHTTP1: true });
+    h2Server.on('session', () => { h2SessionCount += 1; });
+    h2Server.on('stream', (stream, headers) => {
+      const payload = zlib.gzipSync(JSON.stringify({
+        ok: true,
+        path: headers[':path'],
+        acceptEncoding: headers['accept-encoding'] || ''
+      }));
+      stream.respond({
+        ':status': 200,
+        'content-type': 'application/json',
+        'content-encoding': 'gzip'
+      });
+      stream.end(payload);
+    });
+    await new Promise(resolve => h2Server.listen(0, '127.0.0.1', resolve));
+    const h2Addr = h2Server.address();
+
+    let connectCount = 0;
+    const proxyServer = http.createServer();
+    proxyServer.on('connect', (req, clientSocket) => {
+      connectCount += 1;
+      const [host, port] = req.url.split(':');
+      const upstream = net.connect(Number(port), host, () => {
+        clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        upstream.pipe(clientSocket);
+        clientSocket.pipe(upstream);
+      });
+      upstream.on('error', () => clientSocket.destroy());
+    });
+    await new Promise(resolve => proxyServer.listen(0, '127.0.0.1', resolve));
+    const proxyAddr = proxyServer.address();
+
+    try {
+      // 1. Direct HTTPS: 2 sequential requests reuse 1 H2 session and transparently decode gzip.
+      const d1 = await fetchWithProxy(`https://127.0.0.1:${h2Addr.port}/direct-1`, { method: 'GET' }, {
+        tlsOptions: { rejectUnauthorized: false }
+      });
+      const d2 = await fetchWithProxy(`https://127.0.0.1:${h2Addr.port}/direct-2`, { method: 'GET' }, {
+        tlsOptions: { rejectUnauthorized: false }
+      });
+      assert.equal(d1.status, 200);
+      assert.equal(d2.status, 200);
+      const dj1 = await d1.json();
+      const dj2 = await d2.json();
+      assert.equal(dj1.path, '/direct-1');
+      assert.equal(dj2.path, '/direct-2');
+      assert.match(dj1.acceptEncoding, /gzip/);
+      assert.equal(h2SessionCount, 1);
+
+      // 2. CONNECT proxy HTTPS: 2 sequential requests reuse 1 CONNECT tunnel + 1 pooled H2 session.
+      const p1 = await fetchWithProxy(`https://127.0.0.1:${h2Addr.port}/proxy-1`, { method: 'GET' }, {
+        proxy: `http://127.0.0.1:${proxyAddr.port}`,
+        tlsOptions: { rejectUnauthorized: false }
+      });
+      const p2 = await fetchWithProxy(`https://127.0.0.1:${h2Addr.port}/proxy-2`, { method: 'GET' }, {
+        proxy: `http://127.0.0.1:${proxyAddr.port}`,
+        tlsOptions: { rejectUnauthorized: false }
+      });
+      assert.equal(p1.status, 200);
+      assert.equal(p2.status, 200);
+      assert.equal((await p1.json()).path, '/proxy-1');
+      assert.equal((await p2.json()).path, '/proxy-2');
+      assert.equal(connectCount, 1);
+      assert.equal(h2SessionCount, 2);
+    } finally {
+      proxyServer.closeAllConnections?.();
+      proxyServer.close();
+      h2Server.close();
+    }
+  });
+
+  it('supports go-keyring-encoded hex tokens, word-bounded O(n) cloaking, catalog inflight dedup, KNOWN_MODEL_LIMITS, and error classification', async () => {
+    // 1. go-keyring-encoded: hex payload decoding.
+    const hexKeyring = 'go-keyring-encoded:' + Buffer.from(JSON.stringify({
+      token: { refresh_token: '1//03hex_keyring_tok' }
+    }), 'utf8').toString('hex');
+    assert.deepEqual(parseRefreshTokenInput(hexKeyring), ['1//03hex_keyring_tok']);
+
+    // 2. O(n) Cloak matcher handles long invisible runs without backtracking and respects word boundaries.
+    const tricky = `a coding assistant running inside pipeline\nA coding assistant running i${'\u200b'.repeat(50)}nside\t\tpi!`;
+    const cloaked = sanitizeSystemPrompt(tricky);
+    assert.ok(cloaked.includes('running inside pipeline'));
+    assert.ok(cloaked.includes('running within\t\tpi!'));
+
+    // 3. KNOWN_MODEL_LIMITS fills missing upstream fields without overriding upstream values.
+    const sparseCatalog = {
+      models: {
+        'claude-opus-5-5-high': { displayName: 'Claude Opus 5.5 (High)', modelProvider: 'MODEL_PROVIDER_ANTHROPIC' },
+        'gemini-4-hydrogen-high': { displayName: 'Gemini 4 Hydrogen (High)', maxTokens: 2000000, maxOutputTokens: 300000 }
+      }
+    };
+    const built = buildAntigravityModels(sparseCatalog, antigravitySettings());
+    assert.equal(built['claude-opus-5-5-high'].limit.context, KNOWN_MODEL_LIMITS['claude-opus-5-5'].context);
+    assert.equal(built['claude-opus-5-5-high'].limit.output, KNOWN_MODEL_LIMITS['claude-opus-5-5'].output);
+    assert.equal(built['gemini-4-hydrogen-high'].limit.context, 2000000);
+    assert.equal(built['gemini-4-hydrogen-high'].limit.output, 300000);
+
+    // 4. Concurrent catalog fetches deduplicate via inflight map.
+    const dir = makeTempDir();
+    saveAntigravityAccount({
+      id: 'dedup@gmail.com',
+      email: 'dedup@gmail.com',
+      refreshToken: '1//03dedup',
+      accessToken: 'tok-dedup',
+      expiresAt: Date.now() + 3600_000,
+      clientType: 'personal',
+      projectId: 'proj-dedup'
+    }, dir);
+    let catalogHits = 0;
+    const dedupOpts = antigravitySettings({
+      antigravity: { dataDir: dir },
+      fetchFn: async url => {
+        if (url.includes(':fetchAvailableModels')) {
+          catalogHits += 1;
+          await new Promise(r => setTimeout(r, 25));
+          return Response.json(SAMPLE_CATALOG);
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    const authObj = { type: 'api', key: '1//03dedup', metadata: { account: 'dedup@gmail.com' } };
+    const [m1, m2] = await Promise.all([
+      listAntigravityModels(authObj, dedupOpts),
+      listAntigravityModels(authObj, dedupOpts)
+    ]);
+    assert.equal(catalogHits, 1);
+    assert.ok(m1['gemini-4-hydrogen'] && m2['gemini-4-hydrogen']);
+
+    // 5. Upstream error classifier distinguishes TOS_VIOLATION, FAILED_PRECONDITION, and bare 429 prompt_rejected.
+    assert.equal(classifyAntigravityError(403, '{"error":{"message":"TOS_VIOLATION"}}').category, 'tos_violation');
+    assert.equal(classifyAntigravityError(400, '{"error":{"status":"FAILED_PRECONDITION"}}').category, 'failed_precondition');
+    const bare429 = classifyAntigravityError(429, '{"error":{"code":429,"message":"Resource has been exhausted"}}');
+    assert.equal(bare429.category, 'prompt_rejected');
+    assert.ok(bare429.hint.includes('风控'));
   });
 });

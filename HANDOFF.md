@@ -50,11 +50,11 @@ npm run interrogate -- --run
 
 - **零硬编码 OAuth Secret**：源码中绝不提交 Google OAuth `client_id` / `client_secret`。读取优先级：插件选项 `options.antigravity` > 环境变量 > 本机数据目录 `~/.local/share/magpie-antigravity/oauth-clients.json`（可通过 `ANTIGRAVITY_DATA_DIR` 覆盖）> 导入 JSON 包内嵌的 `client_id`/`client_secret`（验证成功后自动落盘，后续免填）。
 - **多格式 Refresh Token 导入 (`parseRefreshTokenPackage`)**：兼容单条 `1//...` Token、Antigravity-Manager 导出的 JSON 数组、旧版插件记录、`agy` 原生 `antigravity-oauth-token` 文件以及 `go-keyring-base64:` 编码内容，自动提取并去重。
-- **Token 刷新与双客户端回退 (`ensureFreshAccountToken`)**：提前 15 分钟刷新短期 `access_token`；仅当未绑定已知 `oauthClientKey` 或遇到明确 `unauthorized_client`/`invalid_client` 时才尝试 Personal / Enterprise（GCP）客户端切换（已绑定账号在遇到 `invalid_grant` 时仅对原绑定客户端做一次瞬态重试，不再盲试另一客户端），确认彻底失效后才标记 `invalidGrant: true` 返回 `401`。
+- **Token 刷新与双客户端回退 (`ensureFreshAccountToken`)**：在过期前 `10 ~ 18` 分钟随机抖动窗口内刷新短期 `access_token`（避免固定周期节律）；仅当未绑定已知 `oauthClientKey` 或遇到明确 `unauthorized_client`/`invalid_client` 时才尝试 Personal / Enterprise（GCP）客户端切换（已绑定账号在遇到 `invalid_grant` 时仅对原绑定客户端做一次瞬态重试，不再盲试另一客户端），确认彻底失效后才标记 `invalidGrant: true` 返回 `401`。
 - **上游端点与项目发现**：
-  - 主端点：`https://daily-cloudcode-pa.googleapis.com/v1internal`（备用：`https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal`）。
-  - 登录校验时调用 `:loadCodeAssist` 获取真实 `cloudaicompanionProject` 与订阅等级（`FREE` / `PRO` / `ULTRA`）；未返回专属项目时自动调用 `:onboardUser`（含长操作轮询）尝试开通个人 `projectId`，仅当无法开通或受限时回退至官方默认 `bamboo-precept-lgxtn`。
-  - 支持 HTTP/HTTPS `CONNECT` 隧道代理（`fetchWithProxy`），Node 运行时下对 HTTPS 目标自动协商 **ALPN `h2`（`node:http2`）** 并在需要时平滑回退 HTTP/1.1；容器环境下（`isContainerEnv`）对 `127.0.0.1` 给出 `host.docker.internal` 提示。
+  - 主端点：`https://daily-cloudcode-pa.googleapis.com/v1internal`（默认不探测 `sandbox.googleapis.com`，仅在显式开启 `sandboxFallback` / `ANTIGRAVITY_SANDBOX_FALLBACK=1` 时启用备用回退）。
+  - 登录校验时调用 `:loadCodeAssist` 获取真实 `cloudaicompanionProject` 与订阅等级（`FREE` / `PRO` / `ULTRA`）；未返回专属项目时自动调用 `:onboardUser`（含长操作轮询）尝试开通个人 `projectId`，仅当无法开通或受限时回退至官方默认 `bamboo-precept-lgxtn`。登录不再默认调用 `:setUserSettings({})` / `:fetchUserInfo`（改为 `autoPrivacy` / `ANTIGRAVITY_AUTO_PRIVACY=1` 按需开启），且 `fetchUserInfo` 统一携带成对 OAuth `User-Agent`。
+  - 支持直连 HTTPS 与 HTTP/HTTPS `CONNECT` 隧道代理（`fetchWithProxy`），Node 运行时下对 HTTPS 目标自动协商 **ALPN `h2`（`node:http2`）并复用长连接会话池（60s 空闲超时 + `gzip`/`deflate` 透明解压）**，必要时平滑回退 HTTP/1.1；容器环境下（`isContainerEnv`）对 `127.0.0.1` 给出 `host.docker.internal` 提示。
 
 ### 3.2 Magpie 供应商契约、模型目录与额度展示 (`lib/antigravity.mjs`)
 
@@ -89,9 +89,9 @@ Google `v1internal` 网关会对请求头、JSON 拓扑及 Prompt 文本执行�
    - **Option C 官方归档流式同步 (`syncHubVersionFromOfficial`)**：当本机未安装官方客户端时，可通过 `npm run antigravity:sync-ua` 从 `https://antigravity.google/download` 解析官方下载链接（`parseOfficialDownloadPage` 优先选择 `linux-x64/Antigravity.tar.gz`），通过 `node:zlib` `createGunzip()` + 零依赖流式 tar 解析器扫描候选中文件；一旦提取到成对 `(version, cl)` 即刻通过 `AbortController` 中止下载流并原子写入 `${dataDir}/hub-version.json`（`source: 'official-sync'`）。
    - 外层 Envelope 严格保持 `['project', 'requestId', 'request', 'model', 'userAgent', 'requestType']`（个人 Gmail 为 `userAgent: 'antigravity'`，企业号为 `'jetski'`；存在工具上下文时带 `requestType: 'agent'`）。
    - `innerRequest` 字段顺序固定为：`contents -> systemInstruction -> tools -> toolConfig -> labels -> generationConfig -> sessionId`。
-   - `requestId` 采用 `agent/<deterministicConvUuid>/<timestamp>/<trajectoryUuid>/<step>`：同一用户主回合及其后续工具调用轨迹复用确定性 `trajectoryUuid`（直到开启下一个用户提问才推进），且 `requestId` 末段 `step`、`labels.last_step_index` 与 `labels.request_id` 统一采用已完成的 `model` 回合数；不注入虚假的 `safetySettings`。
+   - `requestId` 采用 `agent/<deterministicConvUuid>/<timestamp>/<trajectoryUuid>/<step>`：基于含账号 ID 的 `sessionId` 派生确定性 `conv` 与 `trajectoryUuid`（同一用户主回合及其后续工具调用轨迹复用，直到开启下一个用户提问才推进；多账号 failover 时各账号严格隔离，绝不跨号共用同一 `trajectory_id`），且 `requestId` 末段 `step`、`labels.last_step_index` 与 `labels.request_id` 统一采用已完成的 `model` 回合数；不注入虚假的 `safetySettings`。
 2. **第三方 Agent 系统提示词侧载（System Prompt Sideloading）**
-   - 当检测到长系统提示词或包含 `rule|instruction|agent|tool|guideline|context` 的第三方 Agent 指令时，`innerRequest.systemInstruction` 仅发送纯净的官方身份 `OFFICIAL_ANTIGRAVITY_IDENTITY`，而将洗白后的真实系统指令封装为 `<system-instruction priority="critical" role="developer">...</system-instruction>` 注入 `contents[0].parts[0]`。既保留完整指令遵循能力，又避免 `systemInstruction` 字段触发上游拦截。
+   - 当检测到长系统提示词或包含 `rule|instruction|agent|tool|guideline|context` 的第三方 Agent 指令时，`innerRequest.systemInstruction` 仅发送纯净的官方身份 `OFFICIAL_ANTIGRAVITY_IDENTITY`（`silenceBoundary` 默认关闭，按需开启），而将洗白后的真实系统指令封装为精简 `<instructions>...</instructions>` 注入 `contents[0].parts[0]`。既保留完整指令遵循能力，又避免 `systemInstruction` 字段或固定套话触发上游拦截。
 3. **WAF 敏感词洗白与抗零宽字符 Cloak 改写（同步 `agy-cli` & `opencode-antigravity-bridge`）**
    - 自动剥离 `x-anthropic-billing-header:` 及包含 `cc_version`、`cc_entrypoint`、`cch=` 等 Claude Code 计费追踪行。
    - 使用 `buildCloakLineRe` 穿透零宽/隐形字符（`U+00AD`, `U+180E`, `U+200B..U+200F`, `U+2060..U+2064`, `U+FEFF`）匹配并改写所有已验证会被上游拒之门外的特征句：
@@ -99,7 +99,7 @@ Google `v1internal` 网关会对请求头、JSON 拓扑及 Prompt 文本执行�
      - `CLAUDE_CODE_SECURITY`（安全测试授权段落）与 `CLAUDE_CODE_PASTED`（`<pasted_content>` 说明段落）整段等价重述
      - `You are Codex, a coding agent based on GPT-5` / `running in the Codex CLI`
      - `RFC 2119 keywords: MUST, REQUIRED...`（`keywords -> key words`）
-     - `Hermes Agent`、`Nous Research`、`OpenCode`、`inside pi`、`inside pi-bolt`、`DeepSeek Harness`、前 20k 字符内的 `codemode -> codem0de`
+     - `Hermes Agent`、`Nous Research`、`OpenCode`、`inside pi`、`inside pi-bolt`、`DeepSeek Harness`、前 20k 字符内的 `codemode -> code mode`、`tools.opencode.session_move -> session_move_tool`
    - 所有清洗均通过 `transformOutsideCodeBlocks` 保护 Markdown 代码块，避免破坏用户真实代码与 patch 内容。
 4. **工具 Schema 与思考签名兼容**
    - `cleanJsonSchema` 递归展开本地 `$defs`/`definitions` `$ref`，合并 `anyOf`/`oneOf`/`allOf` 分支，转换 `const -> enum`，对齐 `required` 并转大写类型（`OBJECT`/`STRING` 等）。
@@ -167,6 +167,9 @@ Google `v1internal` 网关会对请求头、JSON 拓扑及 Prompt 文本执行�
 | `compactPrompt` | `ANTIGRAVITY_COMPACT_PROMPT` | `false` (`1`/`true` 开启) | 激进精简：剥离系统提示词中的 `<example>` 块并将默认工具预算收紧至 `12000` |
 | `toolTokenBudget` | `ANTIGRAVITY_TOOL_TOKEN_BUDGET` | `18000`（`compactPrompt` 下 `12000`） | 工具 Schema 描述 token 预算上限；设为 `0` 或 `off` 可完全关闭裁剪 |
 | `failoverOnError` | `ANTIGRAVITY_FAILOVER` | `true` (`0`/`false`/`off` 关闭) | 单账号报错（`429`/`503`/`403`/`401`）时是否同请求自动轮换至下一账号 |
+| `silenceBoundary` | `ANTIGRAVITY_SILENCE_BOUNDARY` | `false` (`1`/`true` 开启) | 是否在 `systemInstruction` 注入静默身份边界声明（默认关闭以减少静态特征） |
+| `sandboxFallback` | `ANTIGRAVITY_SANDBOX_FALLBACK` | `false` (`1`/`true` 开启) | 主端点异常时是否允许回退探测 `sandbox.googleapis.com`（默认关闭） |
+| `autoPrivacy` | `ANTIGRAVITY_AUTO_PRIVACY` | `false` (`1`/`true` 开启) | 登录校验时是否自动调用 `:setUserSettings({})` 与 `:fetchUserInfo`（默认关闭） |
 | — | `ANTIGRAVITY_DETECT_LOCAL` / `ANTIGRAVITY_INSTALL_DIR` / `ANTIGRAVITY_IDE_INSTALL_DIR` | 默认关闭本机扫描（优先走 GitHub Actions + `lib/antigravity-ua.json`） | 设为 `1`（或指定安装目录 / 传入 `detectLocal: true`）才在运行期扫描本机客户端目录 |
 | — | `ANTIGRAVITY_HUB_VERSION` / `ANTIGRAVITY_HUB_CL` / `ANTIGRAVITY_OAUTH_USER_AGENT` | `hub-version.json` 缓存或内置基线 | 覆盖出站 Hub UA（必须成对设置 Version 与 CL 才生效）与 OAuth 刷新 UA |
 | — | `ANTIGRAVITY_NORMALIZE_IDENTITY` | 默认开启（`0`/`false` 关闭） | 是否将第三方 Agent 身份重写为 Antigravity（即使关闭仍会剥离 WAF 计费头） |
