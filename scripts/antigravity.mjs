@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import path from 'node:path';
 import {
   antigravityDataDir,
   loadAntigravityAccounts,
@@ -17,6 +18,28 @@ import {
   forwardAntigravity,
   listAntigravityModels
 } from '../lib/antigravity.mjs';
+import {
+  HUB_VERSION_FILENAME,
+  detectLocalAntigravityFingerprint,
+  readCachedHubVersion,
+  resolveAntigravityUserAgents,
+  syncHubVersionFromOfficial
+} from '../lib/antigravity-ua.mjs';
+
+const USAGE_TEXT = `Usage: node scripts/antigravity.mjs <command> [options]
+
+Commands:
+  status                                    Show data dir, effective User-Agents, cache status, and accounts
+  sync-ua [--proxy http://...] [--install-dir <path>] [--local-only]
+                                            Sync paired Hub version/CL from official download or local install
+  oauth --client-id <id> --client-secret <secret> [--type personal|enterprise]
+                                            Save OAuth client credentials
+  login <refresh_token_or_json> [--type personal|enterprise] [--proxy http://...] [--file <path>] [--client-id <id> --client-secret <secret>]
+                                            Verify and import Refresh Token(s)
+  remove <email>                            Remove a saved account
+  quota [--proxy http://...]                Print quota summary JSON
+  models [--proxy http://...]               List aggregated models and variants
+  smoke [--model <id>] [--proxy http://...] Run minimal chat completion smoke test`;
 
 function parseArgs(argv) {
   const args = [...argv];
@@ -27,10 +50,15 @@ function parseArgs(argv) {
     const a = args[i];
     if (a === '--type' || a === '-t') flags.type = args[++i];
     else if (a === '--proxy' || a === '-p') flags.proxy = args[++i];
+    else if (a.startsWith('--proxy=')) flags.proxy = a.slice('--proxy='.length);
     else if (a === '--model' || a === '-m') flags.model = args[++i];
     else if (a === '--file' || a === '-f') flags.file = args[++i];
     else if (a === '--client-id') flags.clientId = args[++i];
     else if (a === '--client-secret') flags.clientSecret = args[++i];
+    else if (a === '--install-dir') flags.installDir = args[++i];
+    else if (a.startsWith('--install-dir=')) flags.installDir = a.slice('--install-dir='.length);
+    else if (a === '--local-only') flags.localOnly = true;
+    else if (a === '--help' || a === '-h') flags.help = true;
     else positional.push(a);
   }
   return { command, flags, positional };
@@ -43,20 +71,92 @@ function readStdinText() {
 
 async function main() {
   const { command, flags, positional } = parseArgs(process.argv.slice(2));
+  if (command === 'help' || command === '--help' || command === '-h' || flags.help) {
+    console.log(USAGE_TEXT);
+    return;
+  }
+
   const opts = antigravitySettings({
     ...(flags.proxy ? { antigravity: { proxy: flags.proxy } } : {})
   });
-  const dataDir = opts.dataDir;
+  const dataDir = antigravityDataDir(opts.dataDir);
 
   if (command === 'status') {
     const accounts = loadAntigravityAccounts(dataDir);
     const clients = loadOAuthClients({ dataDir });
-    console.log(`Data directory: ${antigravityDataDir(dataDir)}`);
+    const cachePath = path.join(dataDir, HUB_VERSION_FILENAME);
+    const cachedBefore = readCachedHubVersion(dataDir);
+    const ua = await resolveAntigravityUserAgents({ dataDir });
+    const cached = cachedBefore || readCachedHubVersion(dataDir);
+    console.log(`Data directory: ${dataDir}`);
+    console.log(`Egress User-Agent: ${ua.egressUserAgent} (source=${ua.source})`);
+    console.log(`OAuth User-Agent: ${ua.oauthUserAgent}`);
+    if (cached) {
+      console.log(`Hub version cache: ${cachePath} (version=${cached.version}, cl=${cached.cl}, source=${cached.source})`);
+    } else if (fs.existsSync(cachePath)) {
+      console.log(`Hub version cache: ${cachePath} (invalid/ignored)`);
+    } else {
+      console.log('Hub version cache: none');
+    }
     console.log(`Configured OAuth clients: ${clients.size}`);
     console.log(`Saved accounts: ${accounts.length}`);
     for (const acc of accounts) {
       console.log(`- ${acc.email} (${acc.tier || 'FREE'}, ${acc.clientType}, project=${acc.projectId})`);
     }
+    return;
+  }
+
+  if (command === 'sync-ua') {
+    if (flags.localOnly || flags.installDir) {
+      const detected = await detectLocalAntigravityFingerprint({
+        dataDir,
+        ...(flags.installDir ? { installDir: flags.installDir } : {}),
+        persist: true
+      });
+      if (!detected) {
+        console.error(
+          `No valid paired Antigravity Hub version/CL fingerprint found locally${flags.installDir ? ` in ${flags.installDir}` : ''}. ` +
+          'Run without --local-only to sync from the official download page.'
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const ua = await resolveAntigravityUserAgents({ dataDir, detectLocal: false });
+      console.log(`Version: ${detected.version}`);
+      console.log(`CL: ${detected.cl}`);
+      console.log(`OAuth User-Agent: ${detected.oauthUserAgent || ua.oauthUserAgent}`);
+      console.log(`Source: ${detected.source || 'local'}`);
+      if (detected.binaryPath) console.log(`Binary path: ${detected.binaryPath}`);
+      console.log(`Egress User-Agent: ${ua.egressUserAgent} (source=${ua.source})`);
+      console.log(`Saved cache: ${path.join(dataDir, HUB_VERSION_FILENAME)}`);
+      return;
+    }
+
+    let synced;
+    try {
+      synced = await syncHubVersionFromOfficial({
+        dataDir,
+        proxy: opts.proxy || undefined
+      });
+    } catch (err) {
+      console.error(`Failed to sync Antigravity User-Agent from official download page: ${err?.message || err}`);
+      console.error('Tip: pass --proxy http://... if needed, or run with --local-only to scan a local Antigravity installation.');
+      process.exitCode = 1;
+      return;
+    }
+    if (!synced || !synced.version || !synced.cl) {
+      console.error('Official download sync did not return a valid paired version and CL.');
+      process.exitCode = 1;
+      return;
+    }
+    const ua = await resolveAntigravityUserAgents({ dataDir, detectLocal: false });
+    console.log(`Version: ${synced.version}`);
+    console.log(`CL: ${synced.cl}`);
+    console.log(`OAuth User-Agent: ${synced.oauthUserAgent || ua.oauthUserAgent}`);
+    console.log(`Source: ${synced.source || 'official-sync'}`);
+    if (synced.archiveUrl) console.log(`Archive URL: ${synced.archiveUrl}`);
+    console.log(`Egress User-Agent: ${ua.egressUserAgent} (source=${ua.source})`);
+    console.log(`Saved cache: ${path.join(dataDir, HUB_VERSION_FILENAME)}`);
     return;
   }
 
@@ -162,6 +262,8 @@ async function main() {
   }
 
   console.error(`Unknown command: ${command}`);
+  console.error('');
+  console.error(USAGE_TEXT);
   process.exitCode = 1;
 }
 
