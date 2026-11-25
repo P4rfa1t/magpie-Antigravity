@@ -219,6 +219,65 @@ describe('Antigravity fingerprint extraction & local detection', () => {
     assert.equal(res, null);
     assert.equal(readCachedHubVersion(dataDir), null);
   });
+
+  it('prefers package.json hub version over product.json IDE version with Blaze CL, and rejects IDE-only pairing', async () => {
+    const blazePayload = Buffer.from(
+      'noise\0changelist 1029194470 //depot/branches/antigravity_web_release_branch/main.go\0',
+      'utf8'
+    );
+
+    // 1. product.json (4.4.0 IDE) + package.json (2.35.1 hub) + Blaze CL => hub 2.35.1 + oauth 4.4.0
+    const installWithPkg = makeTempDir('magpie-agy-pkg-blaze-');
+    const dataWithPkg = makeTempDir('magpie-agy-pkg-blaze-data-');
+    const appDir1 = path.join(installWithPkg, 'resources', 'app');
+    const binDir1 = path.join(installWithPkg, 'resources', 'bin');
+    fs.mkdirSync(appDir1, { recursive: true });
+    fs.mkdirSync(binDir1, { recursive: true });
+    fs.writeFileSync(path.join(appDir1, 'product.json'), JSON.stringify({
+      nameShort: 'Antigravity',
+      version: '4.4.0',
+      ideVersion: '4.4.0',
+      vscodeVersion: '1.100.0'
+    }) + '\n', 'utf8');
+    fs.writeFileSync(path.join(appDir1, 'package.json'), JSON.stringify({
+      name: 'antigravity',
+      version: '2.35.1'
+    }) + '\n', 'utf8');
+    fs.writeFileSync(path.join(binDir1, 'language_server.exe'), blazePayload);
+
+    const detected = await detectLocalAntigravityFingerprint({
+      dataDir: dataWithPkg,
+      installDir: installWithPkg,
+      persist: true
+    });
+    assert.ok(detected);
+    assert.equal(detected.version, '2.35.1');
+    assert.equal(detected.cl, '1029194470');
+    assert.equal(detected.oauthUserAgent, 'vscode/1.100.0 (Antigravity/4.4.0)');
+
+    // 2. product.json (4.4.0 IDE) WITHOUT package.json + Blaze CL => null (never conflate IDE version as Hub version)
+    const installIdeOnly = makeTempDir('magpie-agy-ide-only-');
+    const dataIdeOnly = makeTempDir('magpie-agy-ide-only-data-');
+    const appDir2 = path.join(installIdeOnly, 'resources', 'app');
+    const binDir2 = path.join(installIdeOnly, 'resources', 'bin');
+    fs.mkdirSync(appDir2, { recursive: true });
+    fs.mkdirSync(binDir2, { recursive: true });
+    fs.writeFileSync(path.join(appDir2, 'product.json'), JSON.stringify({
+      nameShort: 'Antigravity',
+      version: '4.4.0',
+      ideVersion: '4.4.0',
+      vscodeVersion: '1.100.0'
+    }) + '\n', 'utf8');
+    fs.writeFileSync(path.join(binDir2, 'language_server.exe'), blazePayload);
+
+    const rejected = await detectLocalAntigravityFingerprint({
+      dataDir: dataIdeOnly,
+      installDir: installIdeOnly,
+      persist: true
+    });
+    assert.equal(rejected, null);
+    assert.equal(readCachedHubVersion(dataIdeOnly), null);
+  });
 });
 
 describe('Antigravity UA priority resolution', () => {
@@ -373,6 +432,45 @@ describe('Official download page parser & streaming tar.gz sync', () => {
     assert.equal(cached?.version, '2.37.0');
     assert.equal(cached?.cl, '1066000777');
     assert.equal(cached?.source, 'official-sync');
+  });
+
+  it('uses GCS expectedVersion (not product.json IDE version) when tar archive only has Blaze CL', async () => {
+    const dataDir = makeTempDir('magpie-agy-sync-blaze-');
+    const archiveUrl = 'https://storage.googleapis.com/antigravity-public/antigravity-hub/2.37.0-99999/linux-x64/Antigravity.tar.gz';
+    const html = `<a href="${archiveUrl}">Download</a>`;
+
+    const tarGz = buildTarGzArchive([
+      {
+        name: 'Antigravity/resources/app/product.json',
+        content: JSON.stringify({ version: '4.4.0', ideVersion: '4.4.0', vscodeVersion: '1.100.0' })
+      },
+      {
+        name: 'Antigravity/resources/bin/language_server',
+        content: Buffer.from(
+          'bin\0changelist 1066000777 //depot/branches/antigravity_web_release_branch/server\0',
+          'utf8'
+        )
+      }
+    ]);
+
+    const fetchFn = async url => {
+      if (url === 'https://antigravity.google/download') {
+        return new Response(html, { status: 200, headers: { 'Content-Type': 'text/html' } });
+      }
+      if (url === archiveUrl) {
+        return new Response(tarGz, { status: 200, headers: { 'Content-Type': 'application/gzip' } });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const synced = await syncHubVersionFromOfficial({
+      dataDir,
+      fetchFn,
+      timeoutMs: 10000
+    });
+    assert.equal(synced.version, '2.37.0');
+    assert.equal(synced.cl, '1066000777');
+    assert.equal(synced.source, 'official-sync');
   });
 });
 
