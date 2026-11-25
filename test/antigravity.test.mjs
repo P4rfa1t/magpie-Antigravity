@@ -1,12 +1,18 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { GeminiWebPlugin, AntigravityPlugin } from '../index.mjs';
 import {
   GCP_OAUTH_CLIENT,
+  NATIVE_OAUTH_USER_AGENT,
   PERSONAL_OAUTH_CLIENT,
+  currentEgressUserAgent,
+  currentOAuthUserAgent,
+  fetchWithProxy,
   loadAntigravityAccounts,
   parseRefreshTokenInput,
   refreshAccessToken,
@@ -31,7 +37,8 @@ import {
   ANTIGRAVITY_BASE,
   ANTIGRAVITY_ID,
   antigravitySettings,
-  buildAntigravityModels
+  buildAntigravityModels,
+  loadSignatureStore
 } from '../lib/antigravity.mjs';
 
 function makeTempDir() {
@@ -1016,9 +1023,161 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     assert.deepEqual(fittedSecond, fitted);
 
     const parsedSettings = antigravitySettings({
-      antigravity: { compactPrompt: true, toolTokenBudget: 9000 }
+      antigravity: { compactPrompt: true, toolTokenBudget: 9000, failoverOnError: false }
     });
     assert.equal(parsedSettings.compactPrompt, true);
     assert.equal(parsedSettings.toolTokenBudget, 9000);
+    assert.equal(parsedSettings.failoverOnError, false);
+  });
+
+  it('keeps trajectory_id and step aligned across tool loops, removes UA placeholder, avoids pinned client probing, persists signatures, and tunnels HTTP CONNECT proxy', async () => {
+    // 1. Clean UA without literal 1.X.X placeholder + configurable overrides.
+    assert.equal(NATIVE_OAUTH_USER_AGENT.includes('1.X.X'), false);
+    assert.equal(currentOAuthUserAgent({ ANTIGRAVITY_OAUTH_USER_AGENT: 'custom-oauth-ua/1.0' }), 'custom-oauth-ua/1.0');
+    assert.ok(currentEgressUserAgent({ ANTIGRAVITY_HUB_VERSION: '9.9.9', ANTIGRAVITY_HUB_CL: '123456' }).includes('antigravity/hub/9.9.9'));
+
+    // 2. Trajectory continuity & step alignment across multi-step tool calls within the same user prompt.
+    const { envelope: step0 } = openAIToAntigravityRequest({
+      model: 'gemini-4-hydrogen',
+      messages: [
+        { role: 'system', content: 'You are a coding assistant.' },
+        { role: 'user', content: 'Check package.json' }
+      ]
+    }, { catalog: SAMPLE_CATALOG, sessionId: 'traj-sess', conversationSeed: 'conv-1' });
+    const { envelope: step1 } = openAIToAntigravityRequest({
+      model: 'gemini-4-hydrogen',
+      messages: [
+        { role: 'system', content: 'You are a coding assistant.' },
+        { role: 'user', content: 'Check package.json' },
+        { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'Read', arguments: '{"path":"package.json"}' } }] },
+        { role: 'tool', tool_call_id: 'c1', content: '{"name":"x"}' }
+      ]
+    }, { catalog: SAMPLE_CATALOG, sessionId: 'traj-sess', conversationSeed: 'conv-1' });
+    const { envelope: nextPrompt } = openAIToAntigravityRequest({
+      model: 'gemini-4-hydrogen',
+      messages: [
+        { role: 'system', content: 'You are a coding assistant.' },
+        { role: 'user', content: 'Check package.json' },
+        { role: 'assistant', content: 'Done.' },
+        { role: 'user', content: 'Now check README.md' }
+      ]
+    }, { catalog: SAMPLE_CATALOG, sessionId: 'traj-sess', conversationSeed: 'conv-1' });
+
+    assert.equal(step0.request.labels.last_step_index, '0');
+    assert.equal(step0.requestId.split('/')[4], '0');
+    assert.equal(step1.request.labels.last_step_index, '1');
+    assert.equal(step1.requestId.split('/')[4], '1');
+    assert.equal(step0.request.labels.trajectory_id, step1.request.labels.trajectory_id);
+    assert.notEqual(step1.request.labels.trajectory_id, nextPrompt.request.labels.trajectory_id);
+
+    // 3. Pinned oauthClientKey does not probe alternate client on invalid_grant.
+    const triedClients = [];
+    await assert.rejects(
+      refreshAccessToken('1//03revoked_pinned', {
+        preferredClientKey: PERSONAL_OAUTH_CLIENT.key,
+        clientId: 'test-personal-id',
+        clientSecret: 'test-personal-secret',
+        gcpClientId: 'test-gcp-id',
+        gcpClientSecret: 'test-gcp-secret',
+        retryDelayMs: 0,
+        fetchFn: async (_url, init) => {
+          triedClients.push(new URLSearchParams(init.body).get('client_id'));
+          return Response.json({ error: 'invalid_grant' }, { status: 400 });
+        }
+      }),
+      err => err.invalidGrant === true
+    );
+    assert.deepEqual(triedClients, ['test-personal-id', 'test-personal-id']);
+
+    // 4. Disk-persisted signature store survives flush and reload; failoverOnError=false stops on first account.
+    const dir = makeTempDir();
+    const sigStore = loadSignatureStore(dir);
+    sigStore.set('persisted_call_1', 'sig_abc_123');
+    sigStore.flush();
+    const cacheJson = JSON.parse(fs.readFileSync(path.join(dir, 'signature-cache.json'), 'utf8'));
+    assert.equal(cacheJson.entries.some(([k, v]) => k === 'persisted_call_1' && v === 'sig_abc_123'), true);
+
+    const authHeadersSeen = [];
+    const plugin = await AntigravityPlugin({}, {
+      antigravity: {
+        dataDir: dir,
+        failoverOnError: false,
+        clientId: 'test-personal-id',
+        clientSecret: 'test-personal-secret'
+      },
+      rateLimitRetries: 0,
+      fetchFn: async (url, init) => {
+        if (url.includes(':fetchAvailableModels')) return Response.json(SAMPLE_CATALOG);
+        if (url.includes(':generateContent')) {
+          authHeadersSeen.push(init.headers.Authorization);
+          return Response.json({ error: { code: 429, message: 'RESOURCE_EXHAUSTED' } }, { status: 429 });
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    saveAntigravityAccount({
+      id: 'one@gmail.com',
+      email: 'one@gmail.com',
+      refreshToken: '1//03one',
+      accessToken: 'tok-one',
+      expiresAt: Date.now() + 3600000,
+      clientType: 'personal',
+      projectId: 'aicode-consumers'
+    }, dir);
+    saveAntigravityAccount({
+      id: 'two@gmail.com',
+      email: 'two@gmail.com',
+      refreshToken: '1//03two',
+      accessToken: 'tok-two',
+      expiresAt: Date.now() + 3600000,
+      clientType: 'personal',
+      projectId: 'aicode-consumers'
+    }, dir);
+    const loader = await plugin.auth.loader(async () => ({
+      type: 'api',
+      key: '1//03one',
+      metadata: { mode: 'antigravity', accounts: ['one@gmail.com', 'two@gmail.com'] }
+    }));
+    const noFailoverRes = await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-hydrogen', messages: [{ role: 'user', content: 'hi' }], stream: false })
+    });
+    assert.equal(noFailoverRes.status, 429);
+    assert.equal(authHeadersSeen.every(h => h === 'Bearer tok-one'), true);
+
+    // 5. CONNECT proxy tunnel works under Node runtime.
+    const targetServer = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, method: req.method, path: req.url }));
+    });
+    await new Promise(resolve => targetServer.listen(0, '127.0.0.1', resolve));
+    const targetAddr = targetServer.address();
+
+    const proxyServer = http.createServer();
+    proxyServer.on('connect', (req, clientSocket) => {
+      const [host, port] = req.url.split(':');
+      const upstream = net.connect(Number(port), host, () => {
+        clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        upstream.pipe(clientSocket);
+        clientSocket.pipe(upstream);
+      });
+      upstream.on('error', () => clientSocket.destroy());
+    });
+    await new Promise(resolve => proxyServer.listen(0, '127.0.0.1', resolve));
+    const proxyAddr = proxyServer.address();
+
+    try {
+      const proxiedRes = await fetchWithProxy(`http://127.0.0.1:${targetAddr.port}/ping`, { method: 'GET' }, {
+        proxy: `http://127.0.0.1:${proxyAddr.port}`
+      });
+      assert.equal(proxiedRes.status, 200);
+      assert.deepEqual(await proxiedRes.json(), { ok: true, method: 'GET', path: '/ping' });
+    } finally {
+      proxyServer.closeAllConnections?.();
+      targetServer.closeAllConnections?.();
+      proxyServer.close();
+      targetServer.close();
+    }
   });
 });

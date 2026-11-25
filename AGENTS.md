@@ -18,6 +18,7 @@ Keep this file compact and link-checked: every path reference is validated by `s
 | Process liveness & Docker proxy hints | `lib/proc.mjs` | `test/zombie.test.mjs`, `test/studio-docker.test.mjs`, `test/backend.test.mjs` |
 | Studio cross-host lock & updater | `lib/studio-updates.mjs`, `docs/models/studio-lock-protocol.tla` | `test/studio-updates.test.mjs`, `test/studio-update-outcomes.test.mjs`, `test/studio-lock-model.test.mjs` |
 | Studio lifecycle & native install | `lib/studio-native.mjs`, `index.mjs`, `lib/studio-upstream.mjs` | `test/studio-native.test.mjs`, `test/studio-official.test.mjs`, `test/studio-pins.test.mjs` |
+| Antigravity (RT) direct OAuth & WAF/cache mapper | `lib/antigravity.mjs`, `lib/antigravity-mapper.mjs`, `lib/antigravity-oauth.mjs`, `scripts/antigravity.mjs` | `test/antigravity.test.mjs` |
 | Magpie plugin HTTP / Bun runtime | `index.mjs`, `lib/usage.mjs` | `test/studio-connect.test.mjs`, `test/studio-connect-legacy.test.mjs` (Node & `bun test`) |
 | Standalone backend & cleanup | `lib/cleanup.mjs`, `lib/cleanup-detached.cjs` | `test/cleanup.test.mjs`, `test/backend.test.mjs`, `test/backend-release.test.mjs` |
 | Release & npm propagation | `scripts/verify-published-package.mjs`, `scripts/release-plugin.mjs` | `test/release-plugin.test.mjs`, `.github/workflows/verify-package.yml` |
@@ -48,4 +49,4 @@ Keep this file compact and link-checked: every path reference is validated by `s
 ## 5. `/correct` Workflow (Prevent Repeat Mistakes)
 
 - **Encode fixes mechanically**: Every agent error or bug fix should add a rule in `scripts/check-guardrails.mjs` (if syntactically checkable) or a deterministic regression / model check in `test/*.test.mjs`.
-- **Keep docs lean**: Add only short high-signal pointers here; put active release instructions in `docs/studio-release.md` and `docs/backend-release.md`, and move superseded managed-build release logs into `docs/history/studio-managed-history.md`.
+- **Keep docs lean**: Add only short high-signal pointers here; put full project context, Antigravity (RT) architecture, WAF cloaking, and cache/CSV analysis in `HANDOFF.md`, put active release instructions in `docs/studio-release.md` and `docs/backend-release.md`, and move superseded managed-build release logs into `docs/history/studio-managed-history.md`.
