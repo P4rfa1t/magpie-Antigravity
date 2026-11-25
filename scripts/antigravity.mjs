@@ -22,6 +22,7 @@ import {
   HUB_VERSION_FILENAME,
   detectLocalAntigravityFingerprint,
   readCachedHubVersion,
+  refreshRemoteHubVersion,
   resolveAntigravityUserAgents,
   syncHubVersionFromOfficial
 } from '../lib/antigravity-ua.mjs';
@@ -30,8 +31,8 @@ const USAGE_TEXT = `Usage: node scripts/antigravity.mjs <command> [options]
 
 Commands:
   status                                    Show data dir, effective User-Agents, cache status, and accounts
-  sync-ua [--proxy http://...] [--install-dir <path>] [--local-only]
-                                            Sync paired Hub version/CL from official download or local install
+  sync-ua [--proxy http://...] [--install-dir <path>] [--local-only] [--remote] [--manifest-url <url>]
+                                            Sync paired Hub version/CL from official download, remote manifest, or local install
   oauth --client-id <id> --client-secret <secret> [--type personal|enterprise]
                                             Save OAuth client credentials
   login <refresh_token_or_json> [--type personal|enterprise] [--proxy http://...] [--file <path>] [--client-id <id> --client-secret <secret>]
@@ -57,7 +58,10 @@ function parseArgs(argv) {
     else if (a === '--client-secret') flags.clientSecret = args[++i];
     else if (a === '--install-dir') flags.installDir = args[++i];
     else if (a.startsWith('--install-dir=')) flags.installDir = a.slice('--install-dir='.length);
+    else if (a === '--manifest-url') flags.manifestUrl = args[++i];
+    else if (a.startsWith('--manifest-url=')) flags.manifestUrl = a.slice('--manifest-url='.length);
     else if (a === '--local-only') flags.localOnly = true;
+    else if (a === '--remote') flags.remote = true;
     else if (a === '--help' || a === '-h') flags.help = true;
     else positional.push(a);
   }
@@ -127,6 +131,37 @@ async function main() {
       console.log(`OAuth User-Agent: ${detected.oauthUserAgent || ua.oauthUserAgent}`);
       console.log(`Source: ${detected.source || 'local'}`);
       if (detected.binaryPath) console.log(`Binary path: ${detected.binaryPath}`);
+      console.log(`Egress User-Agent: ${ua.egressUserAgent} (source=${ua.source})`);
+      console.log(`Saved cache: ${path.join(dataDir, HUB_VERSION_FILENAME)}`);
+      return;
+    }
+
+    if (flags.remote) {
+      let synced;
+      try {
+        synced = await refreshRemoteHubVersion({
+          dataDir,
+          proxy: opts.proxy || undefined,
+          ...(flags.manifestUrl ? { manifestUrl: flags.manifestUrl } : {}),
+          force: true
+        });
+      } catch (err) {
+        console.error(`Failed to sync Antigravity User-Agent from remote manifest: ${err?.message || err}`);
+        console.error('Tip: pass --proxy http://... if needed, or run without --remote to sync directly from antigravity.google.');
+        process.exitCode = 1;
+        return;
+      }
+      if (!synced || !synced.version || !synced.cl) {
+        console.error('Remote UA manifest sync is disabled or did not return a valid paired version and CL.');
+        process.exitCode = 1;
+        return;
+      }
+      const ua = await resolveAntigravityUserAgents({ dataDir, detectLocal: false });
+      console.log(`Version: ${synced.version}`);
+      console.log(`CL: ${synced.cl}`);
+      console.log(`OAuth User-Agent: ${synced.oauthUserAgent || ua.oauthUserAgent}`);
+      console.log(`Source: ${synced.source || 'remote-manifest'}`);
+      if (synced.manifestUrl) console.log(`Manifest URL: ${synced.manifestUrl}`);
       console.log(`Egress User-Agent: ${ua.egressUserAgent} (source=${ua.source})`);
       console.log(`Saved cache: ${path.join(dataDir, HUB_VERSION_FILENAME)}`);
       return;

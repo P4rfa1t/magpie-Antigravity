@@ -11,15 +11,20 @@ import {
   OFFICIAL_HUB_VERSION
 } from '../lib/antigravity-oauth.mjs';
 import {
+  DEFAULT_UA_MANIFEST_URL,
   HUB_VERSION_FILENAME,
+  compareHubVersions,
   detectLocalAntigravityFingerprint,
   extractHubFingerprintFromTextOrBuffer,
   parseOfficialDownloadPage,
   readCachedHubVersion,
+  refreshRemoteHubVersion,
   resolveAntigravityUserAgents,
+  resolveUaManifestUrl,
   syncHubVersionFromOfficial,
   writeCachedHubVersion
 } from '../lib/antigravity-ua.mjs';
+import { antigravitySettings } from '../lib/antigravity.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const CLI_PATH = path.join(REPO_ROOT, 'scripts', 'antigravity.mjs');
@@ -526,5 +531,143 @@ describe('scripts/antigravity.mjs CLI integration', () => {
     );
     assert.equal(missingRes.status, 1);
     assert.match(missingRes.stderr, /No valid paired Antigravity Hub version\/CL fingerprint found locally/);
+  });
+});
+
+describe('Remote manifest sync (Option B) & version convergence', () => {
+  it('points default manifest URL to P4rfa1t/magpie-gemini-web and packages 2.35.1 baseline', () => {
+    assert.equal(
+      DEFAULT_UA_MANIFEST_URL,
+      'https://raw.githubusercontent.com/P4rfa1t/magpie-gemini-web/main/lib/antigravity-ua.json'
+    );
+    assert.equal(OFFICIAL_HUB_VERSION, '2.35.1');
+    assert.equal(OFFICIAL_HUB_CL, '1029194470');
+    assert.equal(compareHubVersions('2.36.0', '2.35.1'), 1);
+    assert.equal(compareHubVersions('2.35.1', '2.35.1'), 0);
+    assert.equal(compareHubVersions('2.35.0', '2.35.1'), -1);
+
+    assert.equal(resolveUaManifestUrl({ env: {} }), DEFAULT_UA_MANIFEST_URL);
+    assert.equal(resolveUaManifestUrl({ env: { ANTIGRAVITY_UA_MANIFEST_URL: 'off' } }), null);
+    assert.equal(resolveUaManifestUrl({ manifestUrl: 'https://example.com/ua.json' }), 'https://example.com/ua.json');
+    assert.throws(() => antigravitySettings({ antigravity: { uaManifestUrl: 'ftp://bad.example/ua.json' } }));
+    assert.equal(antigravitySettings({ antigravity: { uaManifestUrl: 'off' } }).uaManifestUrl, null);
+  });
+
+  it('refreshes paired UA from remote manifest without downgrading or writing Frankenstein payloads', async () => {
+    const dataDir = makeTempDir('magpie-agy-remote-');
+    let calls = 0;
+
+    const synced = await refreshRemoteHubVersion({
+      dataDir,
+      manifestUrl: 'https://example.com/ua.json',
+      fetchFn: async url => {
+        calls += 1;
+        assert.equal(url, 'https://example.com/ua.json');
+        return Response.json({
+          version: '2.39.0',
+          cl: '1088000999',
+          oauthUserAgent: 'vscode/1.103.0 (Antigravity/4.7.0)'
+        });
+      }
+    });
+    assert.ok(synced);
+    assert.equal(synced.version, '2.39.0');
+    assert.equal(synced.cl, '1088000999');
+    assert.equal(synced.source, 'remote-manifest');
+    assert.equal(calls, 1);
+
+    // Within 12h TTL, repeated call uses cache without network request.
+    const cachedAgain = await refreshRemoteHubVersion({
+      dataDir,
+      manifestUrl: 'https://example.com/ua.json',
+      fetchFn: async () => {
+        throw new Error('should not fetch within TTL');
+      }
+    });
+    assert.equal(cachedAgain?.version, '2.39.0');
+
+    // Remote older version must not downgrade cached 2.39.0 even after TTL expiry.
+    writeCachedHubVersion(dataDir, {
+      ...cachedAgain,
+      detectedAt: Date.now() - 13 * 60 * 60 * 1000
+    });
+    let staleCalled = 0;
+    const noDowngrade = await refreshRemoteHubVersion({
+      dataDir,
+      manifestUrl: 'https://example.com/ua-stale.json',
+      fetchFn: async () => {
+        staleCalled += 1;
+        return Response.json({ version: '2.34.0', cl: '1011000111' });
+      }
+    });
+    assert.equal(staleCalled, 1);
+    assert.equal(noDowngrade?.version, '2.39.0');
+    assert.equal(readCachedHubVersion(dataDir)?.version, '2.39.0');
+
+    // Frankenstein remote entry (missing CL) is rejected; disabled flag returns null.
+    await assert.rejects(() => refreshRemoteHubVersion({
+      dataDir,
+      manifestUrl: 'https://example.com/ua-bad.json',
+      force: true,
+      fetchFn: async () => Response.json({ version: '2.40.0' })
+    }));
+    assert.equal(await refreshRemoteHubVersion({
+      dataDir,
+      env: { ANTIGRAVITY_UA_MANIFEST_URL: 'false' },
+      fetchFn: async () => {
+        throw new Error('should not fetch when disabled');
+      }
+    }), null);
+  });
+
+  it('overrides stale disk cache when baseline advances or stale official-sync finds newer local install', async () => {
+    const dataDir = makeTempDir('magpie-agy-converge-');
+    const installDir = makeTempDir('magpie-agy-converge-install-');
+    makeSyntheticInstallDir(installDir, {
+      version: '2.41.0',
+      cl: '1099111222'
+    });
+
+    // Simulate an outdated disk cache older than packaged baseline (2.35.1).
+    writeCachedHubVersion(dataDir, {
+      version: '2.33.0',
+      cl: '1023160026',
+      source: 'local',
+      detectedAt: Date.now()
+    });
+    const preferBaseline = resolveAntigravityUserAgents({
+      dataDir,
+      env: {},
+      detectLocal: false
+    });
+    assert.equal(preferBaseline.hubVersion, OFFICIAL_HUB_VERSION);
+    assert.equal(preferBaseline.hubCl, OFFICIAL_HUB_CL);
+    assert.equal(preferBaseline.source, 'baseline');
+
+    // Simulate expired (>24h) official-sync cache while local IDE upgraded to 2.41.0.
+    writeCachedHubVersion(dataDir, {
+      version: '2.36.0',
+      cl: '1050000123',
+      source: 'official-sync',
+      detectedAt: Date.now() - 25 * 60 * 60 * 1000
+    });
+    const upgraded = resolveAntigravityUserAgents({
+      dataDir,
+      env: { ANTIGRAVITY_INSTALL_DIR: installDir },
+      detectLocal: true
+    });
+    assert.equal(upgraded.hubVersion, '2.41.0');
+    assert.equal(upgraded.hubCl, '1099111222');
+    assert.equal(upgraded.source, 'local');
+    assert.equal(readCachedHubVersion(dataDir)?.version, '2.41.0');
+  });
+
+  it('includes valid LF-only antigravity-ua-sync GitHub workflow', () => {
+    const workflowPath = path.join(REPO_ROOT, '.github', 'workflows', 'antigravity-ua-sync.yml');
+    const content = fs.readFileSync(workflowPath, 'utf8');
+    assert.equal(content.includes('\r\n'), false);
+    assert.match(content, /cron:\s*['"][^'"]+['"]/);
+    assert.match(content, /syncHubVersionFromOfficial/);
+    assert.match(content, /lib\/antigravity-ua\.json/);
   });
 });

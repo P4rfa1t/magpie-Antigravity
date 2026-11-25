@@ -1,0 +1,95 @@
+name: Sync Antigravity Hub UA manifest
+
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Force update lib/antigravity-ua.json even if version is unchanged or lower
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync-ua:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - id: sync
+        name: Extract latest paired Antigravity Hub version and CL
+        env:
+          FORCE_SYNC: ${{ inputs.force == true && '1' || '0' }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { compareHubVersions, syncHubVersionFromOfficial } from './lib/antigravity-ua.mjs';
+
+          const manifestPath = path.resolve('lib/antigravity-ua.json');
+          const current = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          const force = process.env.FORCE_SYNC === '1';
+
+          const extracted = await syncHubVersionFromOfficial({
+            persist: false,
+            timeoutMs: 60000
+          });
+
+          const cmp = compareHubVersions(extracted.version, current.version);
+          if (!force && cmp < 0) {
+            console.log(`Skip downgrade: extracted ${extracted.version} < current ${current.version}`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'changed=false\n');
+            process.exit(0);
+          }
+
+          const samePair =
+            extracted.version === current.version &&
+            extracted.cl === current.cl &&
+            (extracted.oauthUserAgent || undefined) === (current.oauthUserAgent || undefined);
+
+          if (!force && samePair) {
+            console.log(`No change: already at ${current.version} (cl=${current.cl})`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'changed=false\n');
+            process.exit(0);
+          }
+
+          const next = {
+            version: extracted.version,
+            cl: extracted.cl,
+            ...(extracted.oauthUserAgent ? { oauthUserAgent: extracted.oauthUserAgent } : {}),
+            source: 'official-sync',
+            updatedAt: extracted.detectedAt
+          };
+          fs.writeFileSync(manifestPath, JSON.stringify(next, null, 2) + '\n', 'utf8');
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `changed=true\nversion=${next.version}\ncl=${next.cl}\n`
+          );
+          console.log(`Updated lib/antigravity-ua.json -> ${next.version} (cl=${next.cl})`);
+          JS
+      - name: Verify guardrails and UA tests before push
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          npm run check
+          node --test test/antigravity-ua.test.mjs test/guardrails.test.mjs
+      - name: Commit and push updated UA manifest
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          VERSION: ${{ steps.sync.outputs.version }}
+          CL: ${{ steps.sync.outputs.cl }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/antigravity-ua.json
+          git commit -m "chore(antigravity): sync hub UA to ${VERSION} (cl=${CL})"
+          git push origin HEAD:main

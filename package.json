@@ -21,6 +21,7 @@
     "index.mjs",
     "lib/",
     "lib/antigravity-ua.mjs",
+    "lib/antigravity-ua.json",
     "scripts/backend.mjs",
     "scripts/backend-argon.mjs",
     "scripts/backend-release.mjs",

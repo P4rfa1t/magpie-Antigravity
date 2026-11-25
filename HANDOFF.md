@@ -156,6 +156,7 @@ Google `v1internal` 网关会对请求头、JSON 拓扑及 Prompt 文本执行�
 | :--- | :--- | :--- | :--- |
 | `proxy` | `ANTIGRAVITY_PROXY` | `""` | 访问 Google 的 HTTP/HTTPS 代理（容器内请用 `http://host.docker.internal:<port>`） |
 | `dataDir` | `ANTIGRAVITY_DATA_DIR` | `~/.local/share/magpie-antigravity` | 存放 `accounts.json`、`oauth-clients.json`、`signature-cache.json` 与 `hub-version.json` 的本机目录 |
+| `uaManifestUrl` | `ANTIGRAVITY_UA_MANIFEST_URL` | `https://raw.githubusercontent.com/P4rfa1t/magpie-gemini-web/main/lib/antigravity-ua.json` | 运行期轻量同步的远端成对 UA 清单地址；设为 `off`/`false`/`0` 可关闭后台拉取 |
 | `clientId` / `clientSecret` | — | — | Personal Google OAuth 客户端凭据（首次填入或由导入 JSON 自动保存） |
 | `gcpClientId` / `gcpClientSecret` | — | — | Enterprise / GCP OAuth 客户端凭据 |
 | `allowTools` / `allowImages` / `imageModels` | — | `true` | 是否启用工具调用、图片输入与生图模型 |
@@ -173,6 +174,7 @@ Google `v1internal` 网关会对请求头、JSON 拓扑及 Prompt 文本执行�
 ```bash
 npm run antigravity:status                                     # 查看数据目录、有效 Egress/OAuth UA、hub-version.json 缓存与账号
 npm run antigravity:sync-ua                                    # Option C：从官方下载页流式解析归档提取成对 (version, cl) 并落盘
+npm run antigravity:sync-ua -- --remote                        # Option B：从 GitHub 成对清单快速拉取同步（<1s）
 npm run antigravity:sync-ua -- --local-only                    # Option A：仅扫描本机 Antigravity 客户端（可加 --install-dir <路径>）
 npm run antigravity:sync-ua -- --proxy http://127.0.0.1:7890   # 通过 HTTP 代理同步官方归档指纹
 npm run antigravity:oauth -- --client-id <ID> --client-secret <SECRET>
