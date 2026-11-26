@@ -301,7 +301,7 @@ describe('Antigravity UA priority resolution', () => {
     assert.ok(baseline.egressUserAgent.includes(`cl=${OFFICIAL_HUB_CL}`));
 
     writeCachedHubVersion(dataDir, {
-      version: '2.35.1',
+      version: '8.1.0',
       cl: '1042000123',
       oauthUserAgent: 'vscode/1.99.2 (Antigravity/4.4.0)',
       source: 'official-sync',
@@ -313,10 +313,10 @@ describe('Antigravity UA priority resolution', () => {
       env: {},
       detectLocal: false
     });
-    assert.equal(fromCache.hubVersion, '2.35.1');
+    assert.equal(fromCache.hubVersion, '8.1.0');
     assert.equal(fromCache.hubCl, '1042000123');
     assert.equal(fromCache.oauthUserAgent, 'vscode/1.99.2 (Antigravity/4.4.0)');
-    assert.ok(fromCache.egressUserAgent.includes('antigravity/hub/2.35.1'));
+    assert.ok(fromCache.egressUserAgent.includes('antigravity/hub/8.1.0'));
     assert.ok(fromCache.egressUserAgent.includes('cl=1042000123'));
 
     // Partial env override must NOT mix new version with cached/baseline CL.
@@ -325,23 +325,23 @@ describe('Antigravity UA priority resolution', () => {
       env: { ANTIGRAVITY_HUB_VERSION: '9.9.9' },
       detectLocal: false
     });
-    assert.equal(halfEnv.hubVersion, '2.35.1');
+    assert.equal(halfEnv.hubVersion, '8.1.0');
     assert.equal(halfEnv.hubCl, '1042000123');
 
     const fullEnv = await resolveAntigravityUserAgents({
       dataDir,
       env: {
-        ANTIGRAVITY_HUB_VERSION: '3.0.0',
+        ANTIGRAVITY_HUB_VERSION: '9.0.0',
         ANTIGRAVITY_HUB_CL: '1099000111',
         ANTIGRAVITY_OAUTH_USER_AGENT: 'custom-oauth-ua/1.0'
       },
       detectLocal: false
     });
-    assert.equal(fullEnv.hubVersion, '3.0.0');
+    assert.equal(fullEnv.hubVersion, '9.0.0');
     assert.equal(fullEnv.hubCl, '1099000111');
     assert.equal(fullEnv.oauthUserAgent, 'custom-oauth-ua/1.0');
     assert.equal(fullEnv.source, 'env');
-    assert.ok(fullEnv.egressUserAgent.includes('antigravity/hub/3.0.0'));
+    assert.ok(fullEnv.egressUserAgent.includes('antigravity/hub/9.0.0'));
     assert.ok(fullEnv.egressUserAgent.includes('cl=1099000111'));
   });
 });
@@ -535,14 +535,19 @@ describe('scripts/antigravity.mjs CLI integration', () => {
 });
 
 describe('Remote manifest sync (Option B) & version convergence', () => {
-  it('points default manifest URL to P4rfa1t/magpie-gemini-web and packages 2.35.1 baseline', () => {
+  it('points default manifest URL to P4rfa1t/magpie-gemini-web and loads valid paired manifest baseline', () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'lib', 'antigravity-ua.json'), 'utf8'));
     assert.equal(
       DEFAULT_UA_MANIFEST_URL,
       'https://raw.githubusercontent.com/P4rfa1t/magpie-gemini-web/main/lib/antigravity-ua.json'
     );
-    assert.equal(OFFICIAL_HUB_VERSION, '2.35.1');
-    assert.equal(OFFICIAL_HUB_CL, '1029194470');
-    assert.equal(NATIVE_OAUTH_USER_AGENT, 'vscode/1.107.0 (Antigravity/2.8.0)');
+    assert.match(manifest.version, /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/);
+    assert.match(manifest.cl, /^\d{6,}$/);
+    assert.match(manifest.oauthUserAgent, /^vscode\/\d+\.\d+\.\d+ \(Antigravity\/\d+\.\d+\.\d+\)$/);
+    assert.equal(compareHubVersions(manifest.version, '2.35.1') >= 0, true);
+    assert.equal(OFFICIAL_HUB_VERSION, manifest.version);
+    assert.equal(OFFICIAL_HUB_CL, manifest.cl);
+    assert.equal(NATIVE_OAUTH_USER_AGENT, manifest.oauthUserAgent);
     assert.equal(compareHubVersions('2.36.0', '2.35.1'), 1);
     assert.equal(compareHubVersions('2.35.1', '2.35.1'), 0);
     assert.equal(compareHubVersions('2.35.0', '2.35.1'), -1);
@@ -565,14 +570,14 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
         calls += 1;
         assert.equal(url, 'https://example.com/ua.json');
         return Response.json({
-          version: '2.39.0',
+          version: '8.39.0',
           cl: '1088000999',
           oauthUserAgent: 'vscode/1.103.0 (Antigravity/4.7.0)'
         });
       }
     });
     assert.ok(synced);
-    assert.equal(synced.version, '2.39.0');
+    assert.equal(synced.version, '8.39.0');
     assert.equal(synced.cl, '1088000999');
     assert.equal(synced.source, 'remote-manifest');
     assert.equal(calls, 1);
@@ -585,9 +590,9 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
         throw new Error('should not fetch within TTL');
       }
     });
-    assert.equal(cachedAgain?.version, '2.39.0');
+    assert.equal(cachedAgain?.version, '8.39.0');
 
-    // Remote older version must not downgrade cached 2.39.0 even after TTL expiry.
+    // Remote older version must not downgrade cached 8.39.0 even after TTL expiry.
     writeCachedHubVersion(dataDir, {
       ...cachedAgain,
       detectedAt: Date.now() - 13 * 60 * 60 * 1000
@@ -602,15 +607,15 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
       }
     });
     assert.equal(staleCalled, 1);
-    assert.equal(noDowngrade?.version, '2.39.0');
-    assert.equal(readCachedHubVersion(dataDir)?.version, '2.39.0');
+    assert.equal(noDowngrade?.version, '8.39.0');
+    assert.equal(readCachedHubVersion(dataDir)?.version, '8.39.0');
 
     // Frankenstein remote entry (missing CL) is rejected; disabled flag returns null.
     await assert.rejects(() => refreshRemoteHubVersion({
       dataDir,
       manifestUrl: 'https://example.com/ua-bad.json',
       force: true,
-      fetchFn: async () => Response.json({ version: '2.40.0' })
+      fetchFn: async () => Response.json({ version: '8.40.0' })
     }));
     assert.equal(await refreshRemoteHubVersion({
       dataDir,
@@ -625,11 +630,11 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
     const dataDir = makeTempDir('magpie-agy-converge-');
     const installDir = makeTempDir('magpie-agy-converge-install-');
     makeSyntheticInstallDir(installDir, {
-      version: '2.41.0',
+      version: '8.41.0',
       cl: '1099111222'
     });
 
-    // Simulate an outdated disk cache older than packaged baseline (2.35.1).
+    // Simulate an outdated disk cache older than packaged baseline.
     writeCachedHubVersion(dataDir, {
       version: '2.33.0',
       cl: '1023160026',
@@ -653,9 +658,9 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
     });
     assert.equal(noLocalScan.source, 'baseline');
 
-    // Simulate expired (>24h) official-sync cache while local IDE upgraded to 2.41.0.
+    // Simulate expired (>24h) official-sync cache while local IDE upgraded to 8.41.0.
     writeCachedHubVersion(dataDir, {
-      version: '2.36.0',
+      version: '8.36.0',
       cl: '1050000123',
       source: 'official-sync',
       detectedAt: Date.now() - 25 * 60 * 60 * 1000
@@ -665,10 +670,10 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
       env: { ANTIGRAVITY_INSTALL_DIR: installDir },
       detectLocal: true
     });
-    assert.equal(upgraded.hubVersion, '2.41.0');
+    assert.equal(upgraded.hubVersion, '8.41.0');
     assert.equal(upgraded.hubCl, '1099111222');
     assert.equal(upgraded.source, 'local');
-    assert.equal(readCachedHubVersion(dataDir)?.version, '2.41.0');
+    assert.equal(readCachedHubVersion(dataDir)?.version, '8.41.0');
   });
 
   it('includes valid LF-only antigravity-ua-sync GitHub workflow', () => {
