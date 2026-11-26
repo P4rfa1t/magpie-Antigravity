@@ -246,17 +246,16 @@ npm run antigravity:smoke -- --model gemini-3.8-flash-low      # 发送最小连
   - `SendUserCascadeMessage` 附带 `images` 时，客户端将图片保存至 `.user_uploaded/` 并在用户 `contents[0].parts` 中生成 `[{ text: ... }, { inlineData: { mimeType, data } }]`。
 - 取消：孤立 `language_server.exe` 上调用 `CancelCascadeInvocation` 后，本地 mock 端观察到客户端直接断开 SSE 连接（无额外上游取消请求）。
 
-### 8.3 未完成任务（按优先级）
+### 8.3 后续可关注与未完成事项（按优先级）
 
-1. **【高】macOS CI 仍然红**：`Run test suite` 的 `Test (macos-15, Node 22)` 在 `44d8aac` 后再次被取消（Run `45792233011`），注解仍是 `The job was not acquired by Runner of type hosted even after multiple attempts`；该任务 `09:28:05Z` 开始、`09:43:06Z` 结束，恰好 15 分钟。**因此把 `timeout-minutes` 提到 30 对排队等待无效**（它只限制已开始的作业），`44d8aac` 里对 `test.yml` / `publish-package.yml` 的 `timeout-minutes: 30` 改动不能解决该问题；`matrix.exclude` 去掉 `macos-15 + Node 26.8.2` 只减少了排队数量。可选方案：改用 `macos-15-intel`、或把 macOS 设为非阻塞（`continue-on-error`）/ 仅在手动或发布流程运行；需要用户决定。同一问题在更早的 Run `45682632330` 也出现过。
-2. **【中】协议清单的顺序抖动**：`scripts/sync-antigravity-protocol.mjs` 的 `summarizeCapturedExchanges` 中 `observedEndpoints` 按到达顺序记录，`fetchAvailableModels` / `fetchUserInfo` 的先后受并发影响（Run `45792259249` 的 bot diff 已出现对调）。应对该数组排序，否则日常不带 `force` 的定时任务也可能因顺序变化产生无意义提交。
-3. **【中】协议清单未被消费**：`lib/antigravity-protocol.json` 目前只是快照，没有任何测试把它与映射器的实际输出对比。建议新增测试/CI 步骤：当清单中的 `labelKeys`、`toolsPacking`、`acceptEncoding`、`requestIdFormats` 与映射器不一致时报警。已知差异：清单 `labelKeys` 含 `last_execution_id`（已实测确认仅跨次 `SendUserCascadeMessage` 时由 `language_server` 发出，同一执行内工具循环不带），映射器目前不发送该键。
-4. **【中】`checkpoint` 轻量请求未实现**：官方在部分 cascade 中会额外发 `requestType: "checkpoint"`、`requestId: "checkpoint/<uuid>"`、无 `tools` / `labels` 的标题生成请求（早期两次抓包各出现一次；后续两次三轮探针里没有出现，触发条件**未确认**）；本插件不发。是否模拟需权衡（多一次请求 vs 更接近官方行为），未决定。
-5. **【中】`writeTrajectoryAcls` / `fetchUserInfo` / `listExperiments` 等伴生 RPC 未模拟**（见 §7「已知硬边界」），官方在已抓到的 cascade 里每次 agent 请求后都会调用 `:writeTrajectoryAcls`；本插件登录默认也不调用 `fetchUserInfo`。
-6. **【低】短时突发限流阈值、缓存 TTL 与 `isLongQuotaExhausted` 秒级边界**：5h 池耗尽 `429` 样本及 `retryDelay` 格式已实测拿下；未测项仅剩短时突发并发速率上限、缓存淘汰 TTL 与 `503 MODEL_CAPACITY_EXHAUSTED` 现场包。另实测确认 `isLongQuotaExhausted` 正则 `/Resets in \d+[hm]/i` 对 `<1m` 文本（如 `Resets in 45s`）不会转为 `400`（可视情况评估是否保持）。
-7. **【低】TLS 指纹**：官方 Go `language_server` 经代理的 ClientHello 为 `JA3 03117a8ed39ef02427ebbc39f121275c` / `JA4 t13d1312h1_f57a46bbacb6_f50d94e863eb`、`ALPN http/1.1`，Node 的指纹不同；纯 JS 无法对齐，仅作记录。
-8. **【低】AI Studio 代码仍在仓库**：本次只删除了 CI 工作流。`lib/studio*.mjs`、`scripts/studio*.mjs`、`patches/studio-*`、`docs/studio-release.md`、`LICENSE-AISTUDIO` 与 `index.mjs` 的 `AIStudioPlugin` 导出、`package.json` 的 `files` / scripts 均未动；`AGENTS.md` 的验证表仍引用 studio 测试。`backend.yml` / `publish-backend.yml`（`gemini-web` Go 后端）也还在，用户尚未回答是否同样删除。若要彻底移除须同步调整 `scripts/check-guardrails.mjs` 的闭包规则与 `test/*`。
-9. **【低】CI 注解**：`actions/checkout@v4` / `actions/setup-node@v4` 触发 Node.js 20 弃用警告，后续需升级版本。
+1. **【待线上验证】macOS CI runner 切换效果**：已将 `.github/workflows/test.yml` 与 `.github/workflows/publish-package.yml` 中的 `macos-15`（arm64 拥堵队列）替换为 `macos-15-intel`（保留 `exclude: macos-15-intel + Node 26.8.2`），待本次推送后观察是否顺利抢占 runner。
+2. **【中】`checkpoint` 轻量请求未实现**：官方在部分 cascade 中会额外发 `requestType: "checkpoint"`、`requestId: "checkpoint/<uuid>"`、无 `tools` / `labels` 的标题生成请求（早期两次抓包各出现一次；后续两次三轮探针里没有出现，触发条件**未确认**）；本插件不发。是否模拟需权衡（多一次请求 vs 更接近官方行为），未决定。
+3. **【中】`writeTrajectoryAcls` / `fetchUserInfo` / `listExperiments` 等伴生 RPC 未模拟**（见 §7「已知硬边界」），官方在已抓到的 cascade 里每次 agent 请求后都会调用 `:writeTrajectoryAcls`；本插件登录默认也不调用 `fetchUserInfo`。
+4. **【低】短时突发限流阈值与缓存 TTL**：5h 池耗尽 `429` 样本及 `retryDelay` 格式已实测拿下，且 `isLongQuotaExhausted` 已兼容 `<1m` 秒级冷却文案（`Resets in \d+[hms]`）并补齐单测；未测项仅剩短时突发并发速率上限、缓存淘汰 TTL 与 `503 MODEL_CAPACITY_EXHAUSTED` 现场包。
+5. **【低】协议清单自动化已落地**：`scripts/sync-antigravity-protocol.mjs` 已对 `observedEndpoints` 排序消除并发顺序抖动，且 `test/antigravity.test.mjs` 已直接读取 `lib/antigravity-protocol.json` 校验映射器输出拓扑/标签/包封结构。
+6. **【低】TLS 指纹**：官方 Go `language_server` 经代理的 ClientHello 为 `JA3 03117a8ed39ef02427ebbc39f121275c` / `JA4 t13d1312h1_f57a46bbacb6_f50d94e863eb`、`ALPN http/1.1`，Node 的指纹不同；纯 JS 无法对齐，仅作记录。
+7. **【低】AI Studio 代码仍在仓库**：本次只删除了 CI 工作流。`lib/studio*.mjs`、`scripts/studio*.mjs`、`patches/studio-*`、`docs/studio-release.md`、`LICENSE-AISTUDIO` 与 `index.mjs` 的 `AIStudioPlugin` 导出、`package.json` 的 `files` / scripts 均未动；`AGENTS.md` 的验证表仍引用 studio 测试。`backend.yml` / `publish-backend.yml`（`gemini-web` Go 后端）也还在，用户尚未回答是否同样删除。若要彻底移除须同步调整 `scripts/check-guardrails.mjs` 的闭包规则与 `test/*`。
+8. **【低】CI 注解**：`actions/checkout@v4` / `actions/setup-node@v4` 触发 Node.js 20 弃用警告，后续需升级版本。
 
 ### 8.4 安全与清理提醒
 

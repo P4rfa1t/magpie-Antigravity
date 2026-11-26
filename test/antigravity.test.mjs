@@ -2365,5 +2365,87 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     const bare429 = classifyAntigravityError(429, '{"error":{"code":429,"message":"Resource has been exhausted"}}');
     assert.equal(bare429.category, 'prompt_rejected');
     assert.ok(bare429.hint.includes('风控'));
+
+    // 6. Mapper output matches the live official protocol snapshot recorded in lib/antigravity-protocol.json.
+    const protocol = JSON.parse(fs.readFileSync(new URL('../lib/antigravity-protocol.json', import.meta.url), 'utf8'));
+    const parityTools = [
+      { type: 'function', function: { name: 'tool_one', parameters: { type: 'object', properties: { p: { type: 'string' } } } } },
+      { type: 'function', function: { name: 'tool_two', parameters: { type: 'object', properties: {} } } }
+    ];
+    const { envelope: parityEnv } = openAIToAntigravityRequest({
+      model: 'gemini-4-hydrogen',
+      reasoning_effort: 'high',
+      max_tokens: 4096,
+      messages: [
+        { role: 'system', content: 'Follow project guidelines.' },
+        { role: 'user', content: 'Check protocol alignment.' }
+      ],
+      tools: parityTools
+    }, { catalog: SAMPLE_CATALOG, projectId: 'p-parity', sessionId: '-987654321' });
+
+    assert.deepEqual(Object.keys(parityEnv), protocol.streamGenerateContent.envelopeKeys);
+    assert.equal(parityEnv.userAgent, protocol.streamGenerateContent.userAgentField);
+    assert.match(parityEnv.requestId, /^agent\/[0-9a-f-]{36}\/\d+\/[0-9a-f-]{36}\/\d+$/);
+    assert.match(parityEnv.request.sessionId, /^-?\d+$/);
+    assert.equal(protocol.streamGenerateContent.toolsPacking, 'single_function_declarations_wrapper');
+    assert.equal(parityEnv.request.tools.length, 1);
+    assert.equal(parityEnv.request.tools[0].functionDeclarations.length, 2);
+    // last_execution_id is only emitted across separate SendUserCascadeMessage turns, never inside tool loops.
+    const expectedLabelKeys = protocol.streamGenerateContent.labelKeys.filter(k => k !== 'last_execution_id').sort();
+    assert.deepEqual(Object.keys(parityEnv.request.labels).sort(), expectedLabelKeys);
+    assert.deepEqual(
+      Object.keys(parityEnv.request.generationConfig),
+      protocol.streamGenerateContent.generationConfigKeys
+    );
+    assert.deepEqual(
+      Object.keys(parityEnv.request.generationConfig.thinkingConfig).sort(),
+      protocol.streamGenerateContent.thinkingConfigKeys
+    );
+    assert.deepEqual(Object.keys(parityEnv.request), protocol.streamGenerateContent.agentRequestKeys);
+  });
+
+  it('treats seconds-level Individual quota reached 429s as per-pool exhaustion instead of locking the account', async () => {
+    const dir = makeTempDir();
+    const fetchFn = async url => {
+      if (url.includes('/oauth2.googleapis.com/token')) {
+        return Response.json({ access_token: 'tok-sec', expires_in: 3600 });
+      }
+      if (url.includes('/userinfo')) {
+        return Response.json({ email: 'sec@gmail.com' });
+      }
+      if (url.includes(':loadCodeAssist')) {
+        return Response.json({ cloudaicompanionProject: 'p-sec', currentTier: { id: 'free-tier' } });
+      }
+      if (url.includes(':fetchAvailableModels')) {
+        return Response.json(SAMPLE_CATALOG);
+      }
+      if (url.includes(':streamGenerateContent') || url.includes(':generateContent')) {
+        return Response.json({
+          error: {
+            code: 429,
+            message: 'Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 45s.',
+            status: 'RESOURCE_EXHAUSTED'
+          }
+        }, { status: 429 });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+    const plugin = await AntigravityPlugin({}, {
+      antigravity: { dataDir: dir, clientId: 'cid', clientSecret: 'csec' },
+      rateLimitBackoffMs: 1,
+      rateLimitRetries: 0,
+      fetchFn
+    });
+    const flow = await plugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const signIn = await flow.callback('1//03seconds');
+    const loader = await plugin.auth.loader(async () => ({ type: 'api', key: signIn.key, metadata: signIn.metadata }));
+    const res = await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-3.8-flash', messages: [{ role: 'user', content: 'hi' }] })
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.match(body.error.message, /配额池已用尽/);
   });
 });

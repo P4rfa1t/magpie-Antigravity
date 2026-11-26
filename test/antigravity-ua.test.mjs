@@ -821,6 +821,23 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
     assert.equal(snapshot.headers.userAgentTemplate, 'antigravity/cli/2.35.2 (aidev_client; os_type=<os>; arch=<arch>; cl=1029311855)');
     assert.equal(snapshot.streamGenerateContent.toolsPacking, 'single_function_declarations_wrapper');
     assert.deepEqual(snapshot.clientMetadata.loadCodeAssist, { ideType: 'ANTIGRAVITY' });
+    assert.deepEqual(snapshot.observedEndpoints, [
+      'POST /v1internal:loadCodeAssist',
+      'POST /v1internal:streamGenerateContent?alt=sse'
+    ]);
+    const reversedSnapshot = summarizeCapturedExchanges([
+      {
+        method: 'POST',
+        url: '/v1internal:streamGenerateContent?alt=sse',
+        body: JSON.stringify({ requestType: 'agent', request: {} })
+      },
+      {
+        method: 'POST',
+        url: '/v1internal:loadCodeAssist',
+        body: JSON.stringify({ metadata: { ideType: 'ANTIGRAVITY' } })
+      }
+    ], signals, { version: '2.35.2', cl: '1029311855' });
+    assert.deepEqual(reversedSnapshot.observedEndpoints, snapshot.observedEndpoints);
 
     const withTs1 = { ...snapshot, updatedAt: 100 };
     const withTs2 = { ...snapshot, updatedAt: 999 };

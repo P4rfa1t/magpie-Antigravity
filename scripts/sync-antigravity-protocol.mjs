@@ -213,7 +213,7 @@ export function summarizeCapturedExchanges(exchanges, staticSignals = {}, meta =
     cl: meta.cl || '',
     ...(meta.oauthUserAgent ? { oauthUserAgent: meta.oauthUserAgent } : {}),
     apiVersion: 'v1internal',
-    observedEndpoints: endpoints,
+    observedEndpoints: [...endpoints].sort(),
     headers: {
       rawHeaderOrder: egressRawHeaderOrder,
       userAgentTemplate: egressUserAgentTemplate || '',
