@@ -471,8 +471,9 @@ describe('Antigravity OpenAI <-> v1internal mapping', () => {
     // User <system-reminder> block is sanitized.
     assert.ok(envelope.request.contents[0].parts[1].text.includes('call read file on its SKILL.md'));
     assert.ok(!envelope.request.contents[0].parts[1].text.includes('Claude Code'));
-    // Tools are expanded one declaration per entry and scrubbed of WAF triggers; fake safetySettings omitted.
-    assert.equal(envelope.request.tools.length, 2);
+    // Tools are packed in a single functionDeclarations entry matching official wire captures; fake safetySettings omitted.
+    assert.equal(envelope.request.tools.length, 1);
+    assert.equal(envelope.request.tools[0].functionDeclarations.length, 2);
     assert.ok(envelope.request.tools[0].functionDeclarations[0].description.includes('code mode'));
     assert.equal(envelope.request.tools[0].functionDeclarations[0].description.includes('codem0de'), false);
     assert.ok(envelope.request.tools[0].functionDeclarations[0].parameters.properties.cmd.description.includes('Prefer read file, edit file, and write file over cat/sed'));
@@ -480,7 +481,20 @@ describe('Antigravity OpenAI <-> v1internal mapping', () => {
     assert.equal(envelope.request.labels.model_enum, 'MODEL_PLACEHOLDER_M522');
     assert.equal(envelope.request.labels.used_claude, 'false');
     assert.match(envelope.requestId, /^agent\/[0-9a-f-]{36}\/\d+\/[0-9a-f-]{36}\/\d+$/);
+    assert.equal(envelope.request.labels.cascade_id, envelope.requestId.split('/')[1]);
+    assert.equal(envelope.request.labels.root_cascade_id, envelope.requestId.split('/')[1]);
     assert.equal(envelope.request.labels.trajectory_id, envelope.requestId.split('/')[3]);
+    assert.deepEqual(Object.keys(envelope.request.labels), [
+      'cascade_id',
+      'last_step_index',
+      'model_enum',
+      'request_id',
+      'root_cascade_id',
+      'trajectory_id',
+      'used_claude',
+      'used_claude_conservative',
+      'used_non_gemini_model'
+    ]);
     assert.deepEqual(Object.keys(envelope), ['project', 'requestId', 'request', 'model', 'userAgent', 'requestType']);
   });
   it('rewords invisible-char obfuscated turned-away phrases and quality-degrading paragraphs', () => {
@@ -1095,11 +1109,18 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     }, { catalog: SAMPLE_CATALOG, sessionId: 'traj-sess', conversationSeed: 'conv-1' });
 
     assert.equal(step0.request.labels.last_step_index, '0');
-    assert.equal(step0.requestId.split('/')[4], '0');
-    assert.equal(step1.request.labels.last_step_index, '1');
-    assert.equal(step1.requestId.split('/')[4], '1');
+    assert.equal(step0.requestId.split('/')[4], '1');
+    assert.equal(step0.request.labels.request_id, `${step0.request.labels.trajectory_id}-0`);
+    assert.equal(step0.request.labels.cascade_id, step0.requestId.split('/')[1]);
+    assert.equal(step0.request.labels.root_cascade_id, step0.requestId.split('/')[1]);
+    assert.equal(step1.request.labels.last_step_index, '2');
+    assert.equal(step1.requestId.split('/')[4], '3');
+    assert.equal(step1.request.labels.request_id, `${step1.request.labels.trajectory_id}-1`);
     assert.equal(step0.request.labels.trajectory_id, step1.request.labels.trajectory_id);
-    assert.notEqual(step1.request.labels.trajectory_id, nextPrompt.request.labels.trajectory_id);
+    assert.equal(nextPrompt.request.labels.last_step_index, '2');
+    assert.equal(nextPrompt.requestId.split('/')[4], '3');
+    assert.equal(nextPrompt.request.labels.request_id, `${nextPrompt.request.labels.trajectory_id}-1`);
+    assert.equal(step1.request.labels.trajectory_id, nextPrompt.request.labels.trajectory_id);
 
     // 3. Pinned oauthClientKey does not probe alternate client on invalid_grant.
     const triedClients = [];
@@ -2173,7 +2194,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     assert.equal(res.status, 429);
     assert.equal(hitUrls.some(u => u.includes('sandbox.googleapis.com')), false);
 
-    // 2. Gemini-native tools expand one functionDeclaration per entry, matching OpenAI path.
+    // 2. Gemini-native tools pack all functionDeclarations into a single entry, matching official wire format & OpenAI path.
     const wrapped = wrapGeminiNativeRequest({
       contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
       tools: [{
@@ -2183,9 +2204,12 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
         ]
       }]
     }, { targetModel: 'gemini-4-hydrogen-high', projectId: 'p1', sessionId: 's-native' });
-    assert.equal(wrapped.request.tools.length, 2);
-    assert.equal(wrapped.request.tools[0].functionDeclarations.length, 1);
-    assert.equal(wrapped.request.tools[1].functionDeclarations.length, 1);
+    assert.equal(wrapped.request.tools.length, 1);
+    assert.equal(wrapped.request.tools[0].functionDeclarations.length, 2);
+    assert.deepEqual(
+      wrapped.request.tools[0].functionDeclarations.map(d => d.name),
+      ['tool_a', 'tool_b']
+    );
   });
 
   it('reuses pooled HTTP/2 sessions and decodes gzip responses for direct HTTPS and CONNECT proxy under Node', async t => {
@@ -2253,7 +2277,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
       const dj2 = await d2.json();
       assert.equal(dj1.path, '/direct-1');
       assert.equal(dj2.path, '/direct-2');
-      assert.match(dj1.acceptEncoding, /gzip/);
+      assert.equal(dj1.acceptEncoding, 'gzip');
       assert.equal(h2SessionCount, 1);
 
       // 2. CONNECT proxy HTTPS: 2 sequential requests reuse 1 CONNECT tunnel + 1 pooled H2 session.

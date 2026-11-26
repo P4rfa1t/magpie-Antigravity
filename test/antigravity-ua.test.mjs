@@ -25,6 +25,11 @@ import {
   writeCachedHubVersion
 } from '../lib/antigravity-ua.mjs';
 import { antigravitySettings } from '../lib/antigravity.mjs';
+import {
+  extractStaticProtocolSignals,
+  isSameProtocolSnapshot,
+  summarizeCapturedExchanges
+} from '../scripts/sync-antigravity-protocol.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const CLI_PATH = path.join(REPO_ROOT, 'scripts', 'antigravity.mjs');
@@ -759,5 +764,77 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
     assert.equal(synced.version, '2.39.0');
     assert.equal(synced.cl, '1088000777');
     assert.equal(synced.oauthUserAgent, 'vscode/1.102.0 (Antigravity/4.6.1)');
+  });
+
+  it('extracts clean binary protocol signals, builds deterministic wire snapshots, and wires protocol sync into CI workflow', () => {
+    const rawBlob = Buffer.from(
+      'https://www.googleapis.com/auth/cclogcreating ' +
+      'https://www.googleapis.com/auth/userinfo.emailtelemetry ' +
+      'https://www.googleapis.com/auth/cloud-platformhttps://www.googleapis.com/auth/drive.file ' +
+      '/v1internal:notifyUsercrypto /v1internal:notifyUser /v1internal:deleteInstancechunk /v1internal:streamGenerateContent?alt=sse ' +
+      'aidev_client os_type=%s arch=%s datacollection_opt_in=false Accept-Encoding',
+      'latin1'
+    );
+    const signals = extractStaticProtocolSignals(rawBlob);
+    assert.ok(signals.oauthScopes.includes('https://www.googleapis.com/auth/cclog'));
+    assert.ok(signals.oauthScopes.includes('https://www.googleapis.com/auth/userinfo.email'));
+    assert.ok(signals.oauthScopes.includes('https://www.googleapis.com/auth/cloud-platform'));
+    assert.ok(signals.oauthScopes.includes('https://www.googleapis.com/auth/drive.file'));
+    assert.ok(signals.endpoints.includes('/v1internal:notifyUser'));
+    assert.ok(signals.endpoints.includes('/v1internal:deleteInstance'));
+    assert.ok(signals.endpoints.includes('/v1internal:streamGenerateContent'));
+    assert.equal(signals.endpoints.some(e => e.endsWith('crypto') || e.endsWith('chunk')), false);
+
+    const snapshot = summarizeCapturedExchanges([
+      {
+        method: 'POST',
+        url: '/v1internal:loadCodeAssist',
+        body: JSON.stringify({ metadata: { ideType: 'ANTIGRAVITY' } })
+      },
+      {
+        method: 'POST',
+        url: '/v1internal:streamGenerateContent?alt=sse',
+        rawHeaderNames: ['Host', 'User-Agent', 'Content-Length', 'Authorization', 'Content-Type', 'Accept-Encoding'],
+        headers: {
+          'user-agent': 'antigravity/cli/2.35.2 (aidev_client; os_type=windows; arch=amd64; cl=1029311855)',
+          'content-type': 'application/json',
+          'accept-encoding': 'gzip'
+        },
+        body: JSON.stringify({
+          project: 'p1',
+          requestId: 'agent/11111111-1111-4111-8111-111111111111/1700000000000/22222222-2222-4222-8222-222222222222/1',
+          request: {
+            contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+            tools: [{ functionDeclarations: [{ name: 'a' }, { name: 'b' }] }],
+            labels: { cascade_id: 'c', last_step_index: '0', root_cascade_id: 'c', trajectory_id: 't' },
+            generationConfig: { maxOutputTokens: 65536, thinkingConfig: { includeThoughts: true, thinkingLevel: 'HIGH' } },
+            sessionId: '-123456'
+          },
+          model: 'gemini-4-hydrogen-high',
+          userAgent: 'antigravity',
+          requestType: 'agent'
+        })
+      }
+    ], signals, { version: '2.35.2', cl: '1029311855' });
+
+    assert.equal(snapshot.headers.acceptEncoding, 'gzip');
+    assert.equal(snapshot.headers.userAgentTemplate, 'antigravity/cli/2.35.2 (aidev_client; os_type=<os>; arch=<arch>; cl=1029311855)');
+    assert.equal(snapshot.streamGenerateContent.toolsPacking, 'single_function_declarations_wrapper');
+    assert.deepEqual(snapshot.clientMetadata.loadCodeAssist, { ideType: 'ANTIGRAVITY' });
+
+    const withTs1 = { ...snapshot, updatedAt: 100 };
+    const withTs2 = { ...snapshot, updatedAt: 999 };
+    assert.equal(isSameProtocolSnapshot(withTs1, withTs2), true);
+    assert.equal(isSameProtocolSnapshot(withTs1, { ...snapshot, headers: { ...snapshot.headers, acceptEncoding: 'br' } }), false);
+
+    const protocolManifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'lib', 'antigravity-protocol.json'), 'utf8'));
+    assert.equal(protocolManifest.apiVersion, 'v1internal');
+    assert.equal(protocolManifest.headers.acceptEncoding, 'gzip');
+    assert.equal(protocolManifest.streamGenerateContent.toolsPacking, 'single_function_declarations_wrapper');
+
+    const workflowText = fs.readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'antigravity-ua-sync.yml'), 'utf8');
+    assert.equal(workflowText.includes('\r\n'), false);
+    assert.match(workflowText, /syncHubVersionFromOfficial/);
+    assert.match(workflowText, /scripts\/sync-antigravity-protocol\.mjs/);
   });
 });

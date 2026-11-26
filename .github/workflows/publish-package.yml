@@ -42,13 +42,27 @@ jobs:
           assert.match(release.targetCommitish, /^[0-9a-f]{40}$/);
           fs.appendFileSync(process.env.GITHUB_OUTPUT, 'sha=' + release.targetCommitish + '\n');
           JS
-  official-studio:
+  verify:
     needs: release-commit
-    uses: ./.github/workflows/studio-official.yml
-    with:
-      ref: ${{ needs.release-commit.outputs.sha }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-commit.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run check
+      - run: npm test
+      - run: npm pack --dry-run
   pack-and-upload:
-    needs: [release-commit, official-studio]
+    needs: [release-commit, verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

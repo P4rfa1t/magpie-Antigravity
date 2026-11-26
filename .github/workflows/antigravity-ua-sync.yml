@@ -1,4 +1,4 @@
-name: Sync Antigravity Hub UA manifest
+name: Sync Antigravity UA and Protocol
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: Force update lib/antigravity-ua.json even if version is unchanged or lower
+        description: Force update manifests even if version or protocol is unchanged
         required: false
         type: boolean
         default: false
@@ -15,9 +15,9 @@ permissions:
   contents: write
 
 jobs:
-  sync-ua:
+  sync-antigravity:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - id: sync
+      - id: sync-ua
         name: Extract latest paired Antigravity Hub version and CL
         env:
           FORCE_SYNC: ${{ inputs.force == true && '1' || '0' }}
@@ -79,19 +79,29 @@ jobs:
           );
           console.log(`Updated lib/antigravity-ua.json -> ${next.version} (cl=${next.cl}, oauth=${resolvedOAuth || 'default'})`);
           JS
-      - name: Verify guardrails and UA tests before push
-        if: steps.sync.outputs.changed == 'true'
+      - id: sync-protocol
+        name: Probe official language_server wire protocol (zero-credential)
+        env:
+          FORCE_SYNC: ${{ inputs.force == true && '1' || '0' }}
+        run: |
+          if [ "$FORCE_SYNC" = "1" ]; then
+            node scripts/sync-antigravity-protocol.mjs --write --force
+          else
+            node scripts/sync-antigravity-protocol.mjs --write
+          fi
+      - name: Verify guardrails and Antigravity tests before push
+        if: steps.sync-ua.outputs.changed == 'true' || steps.sync-protocol.outputs.changed == 'true'
         run: |
           npm run check
-          node --test test/antigravity-ua.test.mjs test/guardrails.test.mjs
-      - name: Commit and push updated UA manifest
-        if: steps.sync.outputs.changed == 'true'
+          node --test test/antigravity-ua.test.mjs test/antigravity.test.mjs test/guardrails.test.mjs
+      - name: Commit and push updated Antigravity manifests
+        if: steps.sync-ua.outputs.changed == 'true' || steps.sync-protocol.outputs.changed == 'true'
         env:
-          VERSION: ${{ steps.sync.outputs.version }}
-          CL: ${{ steps.sync.outputs.cl }}
+          VERSION: ${{ steps.sync-protocol.outputs.version || steps.sync-ua.outputs.version }}
+          CL: ${{ steps.sync-protocol.outputs.cl || steps.sync-ua.outputs.cl }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add lib/antigravity-ua.json
-          git commit -m "chore(antigravity): sync hub UA to ${VERSION} (cl=${CL})"
+          git add lib/antigravity-ua.json lib/antigravity-protocol.json
+          git commit -m "chore(antigravity): sync UA & protocol (${VERSION:-latest}, cl=${CL:-unknown})"
           git push origin HEAD:main

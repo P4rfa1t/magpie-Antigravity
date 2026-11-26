@@ -18,11 +18,11 @@ Keep this file compact and link-checked: every path reference is validated by `s
 | Process liveness & Docker proxy hints | `lib/proc.mjs` | `test/zombie.test.mjs`, `test/studio-docker.test.mjs`, `test/backend.test.mjs` |
 | Studio cross-host lock & updater | `lib/studio-updates.mjs`, `docs/models/studio-lock-protocol.tla` | `test/studio-updates.test.mjs`, `test/studio-update-outcomes.test.mjs`, `test/studio-lock-model.test.mjs` |
 | Studio lifecycle & native install | `lib/studio-native.mjs`, `index.mjs`, `lib/studio-upstream.mjs` | `test/studio-native.test.mjs`, `test/studio-official.test.mjs`, `test/studio-pins.test.mjs` |
-| Antigravity (RT) direct OAuth & WAF/cache mapper | `lib/antigravity.mjs`, `lib/antigravity-mapper.mjs`, `lib/antigravity-oauth.mjs`, `lib/antigravity-ua.mjs`, `lib/antigravity-ua.json`, `scripts/antigravity.mjs` | `test/antigravity.test.mjs`, `test/antigravity-ua.test.mjs`, `.github/workflows/antigravity-ua-sync.yml` |
+| Antigravity (RT) direct OAuth & WAF/cache mapper | `lib/antigravity.mjs`, `lib/antigravity-mapper.mjs`, `lib/antigravity-oauth.mjs`, `lib/antigravity-ua.mjs`, `lib/antigravity-ua.json`, `lib/antigravity-protocol.json`, `scripts/antigravity.mjs`, `scripts/sync-antigravity-protocol.mjs` | `test/antigravity.test.mjs`, `test/antigravity-ua.test.mjs`, `.github/workflows/antigravity-ua-sync.yml` |
 | Magpie plugin HTTP / Bun runtime | `index.mjs`, `lib/usage.mjs` | `test/studio-connect.test.mjs`, `test/studio-connect-legacy.test.mjs` (Node & `bun test`) |
 | Standalone backend & cleanup | `lib/cleanup.mjs`, `lib/cleanup-detached.cjs` | `test/cleanup.test.mjs`, `test/backend.test.mjs`, `test/backend-release.test.mjs` |
 | Release & npm propagation | `scripts/verify-published-package.mjs`, `scripts/release-plugin.mjs` | `test/release-plugin.test.mjs`, `.github/workflows/verify-package.yml` |
-| Diff interrogation & CI | `scripts/interrogate-diff.mjs` | `test/interrogate-diff.test.mjs`, `.github/workflows/test.yml`, `.github/workflows/studio-upstream-watch.yml` |
+| Diff interrogation & CI | `scripts/interrogate-diff.mjs` | `test/interrogate-diff.test.mjs`, `.github/workflows/test.yml`, `.github/workflows/antigravity-ua-sync.yml` |
 
 ## 3. Rule <-> Enforcer Matrix
 
@@ -32,7 +32,6 @@ Keep this file compact and link-checked: every path reference is validated by `s
 | Lock protocol mutual exclusion, single maintenance, live-owner safety, crash/zombie/PID-reuse recovery | `test/studio-lock-model.test.mjs` (BFS model checker + mutation proofs + property tests) |
 | Published npm `latest` CDN dist-tag propagation & clean pack verification | `scripts/verify-published-package.mjs`, `.github/workflows/verify-package.yml` |
 | Pre-publish cleanliness, backend asset reachability, and converged tag/workflow release | `scripts/release-plugin.mjs` (`npm run release:plugin -- --dry-run`) |
-| Daily upstream `Mag1cFall/AIStudio2API` breakage detection & auto-closed tracking issue | `.github/workflows/studio-upstream-watch.yml` -> `.github/workflows/studio-official.yml` |
 
 ## 4. `Author != Verifier` Interrogation Playbook
 

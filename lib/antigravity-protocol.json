@@ -1,0 +1,172 @@
+{
+  "version": "2.35.2",
+  "cl": "1029311855",
+  "oauthUserAgent": "vscode/1.107.0 (Antigravity/2.8.0)",
+  "apiVersion": "v1internal",
+  "observedEndpoints": [
+    "POST /v1internal:loadCodeAssist",
+    "POST /v1internal:fetchUserInfo",
+    "POST /v1internal:fetchAvailableModels",
+    "POST /v1internal:listExperiments",
+    "GET /userinfo",
+    "POST /v1internal:writeTrajectoryAcls",
+    "POST /v1internal:streamGenerateContent?alt=sse"
+  ],
+  "headers": {
+    "rawHeaderOrder": [
+      "Host",
+      "User-Agent",
+      "Content-Length",
+      "Authorization",
+      "Content-Type",
+      "Accept-Encoding"
+    ],
+    "userAgentTemplate": "antigravity/cli/2.35.2 (aidev_client; os_type=<os>; arch=<arch>; cl=1029311855)",
+    "contentType": "application/json",
+    "acceptEncoding": "gzip"
+  },
+  "clientMetadata": {
+    "loadCodeAssist": {
+      "ideType": "ANTIGRAVITY"
+    },
+    "listExperiments": {
+      "updateChannel": "stable"
+    }
+  },
+  "streamGenerateContent": {
+    "envelopeKeys": [
+      "project",
+      "requestId",
+      "request",
+      "model",
+      "userAgent",
+      "requestType"
+    ],
+    "requestTypes": [
+      "agent",
+      "checkpoint"
+    ],
+    "requestIdFormats": [
+      "agent/<cascade_uuid>/<ts_ms>/<trajectory_uuid>/<step>",
+      "checkpoint/<uuid>"
+    ],
+    "agentRequestKeys": [
+      "contents",
+      "systemInstruction",
+      "tools",
+      "labels",
+      "generationConfig",
+      "sessionId"
+    ],
+    "toolsPacking": "single_function_declarations_wrapper",
+    "labelKeys": [
+      "cascade_id",
+      "last_execution_id",
+      "last_step_index",
+      "model_enum",
+      "request_id",
+      "root_cascade_id",
+      "trajectory_id",
+      "used_claude",
+      "used_claude_conservative",
+      "used_non_gemini_model"
+    ],
+    "generationConfigKeys": [
+      "maxOutputTokens",
+      "thinkingConfig"
+    ],
+    "thinkingConfigKeys": [
+      "includeThoughts",
+      "thinkingLevel"
+    ],
+    "userAgentField": "antigravity",
+    "sessionIdFormat": "signed_int64_string"
+  },
+  "binarySignals": {
+    "endpoints": [
+      "/v1internal:battleModeAutoTrigger",
+      "/v1internal:battleModeOverrides",
+      "/v1internal:checkUrlAntivirus",
+      "/v1internal:checkUrlDenylist",
+      "/v1internal:completeCode",
+      "/v1internal:connectInstance",
+      "/v1internal:countTokens",
+      "/v1internal:deleteInstance",
+      "/v1internal:fetchAdminControls",
+      "/v1internal:fetchAvailableModels",
+      "/v1internal:fetchCodeCustomizationState",
+      "/v1internal:fetchFromTrawlerCache",
+      "/v1internal:fetchUserInfo",
+      "/v1internal:generateChat",
+      "/v1internal:generateCode",
+      "/v1internal:generateContent",
+      "/v1internal:getBundleWriteMint",
+      "/v1internal:getCodeAssistGlobalUserSetting",
+      "/v1internal:initiateMeshSession",
+      "/v1internal:internalAtomicAgenticChat",
+      "/v1internal:listAgents",
+      "/v1internal:listAuthorizedDevices",
+      "/v1internal:listCloudAICompanionProjects",
+      "/v1internal:listExperiments",
+      "/v1internal:listInstances",
+      "/v1internal:listModelConfigs",
+      "/v1internal:listRemoteRepositories",
+      "/v1internal:loadCodeAssist",
+      "/v1internal:migrateDatabaseCode",
+      "/v1internal:notifyUser",
+      "/v1internal:onboardUser",
+      "/v1internal:pollSignalingMessages",
+      "/v1internal:provisionConversationBundleDir",
+      "/v1internal:proxyCommand",
+      "/v1internal:recordClientEvent",
+      "/v1internal:recordCodeAssistMetrics",
+      "/v1internal:recordSmartchoicesFeedback",
+      "/v1internal:recordTrajectoryAnalytics",
+      "/v1internal:registerInteraction",
+      "/v1internal:registerWebPush",
+      "/v1internal:retrieveUserQuota",
+      "/v1internal:revokeAuthorizedDevice",
+      "/v1internal:rewriteUri",
+      "/v1internal:searchSnippets",
+      "/v1internal:sendSignalingMessage",
+      "/v1internal:setCodeAssistGlobalUserSetting",
+      "/v1internal:setUserSettings",
+      "/v1internal:streamGenerateChat",
+      "/v1internal:streamGenerateContent",
+      "/v1internal:streamProxyCommand",
+      "/v1internal:tabChat",
+      "/v1internal:transformCode",
+      "/v1internal:updateInstance",
+      "/v1internal:uploadPerformanceProfile",
+      "/v1internal:writeTrajectoryAcls"
+    ],
+    "oauthScopes": [
+      "https://www.googleapis.com/auth/aicode",
+      "https://www.googleapis.com/auth/cclog",
+      "https://www.googleapis.com/auth/cloud-platform",
+      "https://www.googleapis.com/auth/drive",
+      "https://www.googleapis.com/auth/drive.appdata",
+      "https://www.googleapis.com/auth/drive.apps.readonly",
+      "https://www.googleapis.com/auth/drive.file",
+      "https://www.googleapis.com/auth/drive.meet.readonly",
+      "https://www.googleapis.com/auth/drive.metadata",
+      "https://www.googleapis.com/auth/drive.metadata.readonly",
+      "https://www.googleapis.com/auth/drive.photos.readonly",
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/drive.scripts",
+      "https://www.googleapis.com/auth/experimentsandconfigs",
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile"
+    ],
+    "userAgentFragments": [
+      "aidev_client",
+      "os_type=%s",
+      "arch=%s",
+      "datacollection_opt_in=false"
+    ],
+    "hasAcceptEncodingGzip": true,
+    "hasStreamQueryAltSse": true
+  },
+  "source": "official-sync",
+  "updatedAt": 1795683863937
+}
