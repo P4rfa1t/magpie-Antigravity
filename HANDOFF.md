@@ -54,7 +54,7 @@ npm run interrogate -- --run
 - **上游端点与项目发现**：
   - 主端点：`https://daily-cloudcode-pa.googleapis.com/v1internal`（默认不探测 `sandbox.googleapis.com`，仅在显式开启 `sandboxFallback` / `ANTIGRAVITY_SANDBOX_FALLBACK=1` 时启用备用回退）。
   - 登录校验时调用 `:loadCodeAssist` 获取真实 `cloudaicompanionProject` 与订阅等级（`FREE` / `PRO` / `ULTRA`）；未返回专属项目时自动调用 `:onboardUser`（含长操作轮询）尝试开通个人 `projectId`，仅当无法开通或受限时回退至官方默认 `bamboo-precept-lgxtn`。登录不再默认调用 `:setUserSettings({})` / `:fetchUserInfo`（改为 `autoPrivacy` / `ANTIGRAVITY_AUTO_PRIVACY=1` 按需开启），且 `fetchUserInfo` 统一携带成对 OAuth `User-Agent`。
-  - 支持直连 HTTPS 与 HTTP/HTTPS `CONNECT` 隧道代理（`fetchWithProxy`），Node 运行时下对 HTTPS 目标自动协商 **ALPN `h2`（`node:http2`）并复用长连接会话池（60s 空闲超时 + `gzip`/`deflate` 透明解压）**，必要时平滑回退 HTTP/1.1；容器环境下（`isContainerEnv`）对 `127.0.0.1` 给出 `host.docker.internal` 提示。
+  - 支持直连 HTTPS 与 HTTP/HTTPS `CONNECT` 隧道代理（`fetchWithProxy`），Node 运行时下对 HTTPS 目标自动协商 **ALPN `h2`（`node:http2`）并复用长连接会话池（60s 空闲超时 + `gzip`/`deflate` 透明解压，请求默认 `accept-encoding: gzip` 对齐官方）**，必要时平滑回退 HTTP/1.1；容器环境下（`isContainerEnv`）对 `127.0.0.1` 给出 `host.docker.internal` 提示。
 
 ### 3.2 Magpie 供应商契约、模型目录与额度展示 (`lib/antigravity.mjs`)
 
@@ -89,7 +89,7 @@ Google `v1internal` 网关会对请求头、JSON 拓扑及 Prompt 文本执行�
    - **Option C 官方归档流式同步 (`syncHubVersionFromOfficial`)**：当本机未安装官方客户端时，可通过 `npm run antigravity:sync-ua` 从 `https://antigravity.google/download` 解析官方下载链接（`parseOfficialDownloadPage` 优先选择 `linux-x64/Antigravity.tar.gz`），通过 `node:zlib` `createGunzip()` + 零依赖流式 tar 解析器扫描候选中文件；一旦提取到成对 `(version, cl)` 即刻通过 `AbortController` 中止下载流并原子写入 `${dataDir}/hub-version.json`（`source: 'official-sync'`）。
    - 外层 Envelope 严格保持 `['project', 'requestId', 'request', 'model', 'userAgent', 'requestType']`（个人 Gmail 为 `userAgent: 'antigravity'`，企业号为 `'jetski'`；存在工具上下文时带 `requestType: 'agent'`）。
    - `innerRequest` 字段顺序固定为：`contents -> systemInstruction -> tools -> toolConfig -> labels -> generationConfig -> sessionId`。
-   - `requestId` 采用 `agent/<deterministicConvUuid>/<timestamp>/<trajectoryUuid>/<step>`：基于含账号 ID 的 `sessionId` 派生确定性 `conv` 与 `trajectoryUuid`（同一用户主回合及其后续工具调用轨迹复用，直到开启下一个用户提问才推进；多账号 failover 时各账号严格隔离，绝不跨号共用同一 `trajectory_id`），且 `requestId` 末段 `step`、`labels.last_step_index` 与 `labels.request_id` 统一采用已完成的 `model` 回合数；不注入虚假的 `safetySettings`。
+   - `requestId` 采用 `agent/<deterministicConvUuid>/<timestamp>/<trajectoryUuid>/<step>`：基于含账号 ID 的 `sessionId` 派生确定性 `conv` 与 `trajectoryUuid`（同一会话内多轮复用同一 `trajectoryUuid`（2.35.2 官方 `language_server` 同一 cascade 多轮实测 `trajectory_id` 不变，见 §8）；多账号 failover 时各账号严格隔离，绝不跨号共用同一 `trajectory_id`），且 `requestId` 末段 `step` 取 `contents.length`、`labels.last_step_index` 取 `contents.length - 1`、`labels.request_id` 为 `<trajectory_id>-<已完成 model 回合数>`，`labels` 含 `cascade_id` / `root_cascade_id`，`request.tools` 把全部函数声明打包进单个 `{ functionDeclarations }`（均按官方实测对齐，见 §8）；不注入虚假的 `safetySettings`。
 2. **第三方 Agent 系统提示词侧载（System Prompt Sideloading）**
    - 当检测到长系统提示词或包含 `rule|instruction|agent|tool|guideline|context` 的第三方 Agent 指令时，`innerRequest.systemInstruction` 仅发送纯净的官方身份 `OFFICIAL_ANTIGRAVITY_IDENTITY`（`silenceBoundary` 默认关闭，按需开启），而将洗白后的真实系统指令封装为精简 `<instructions>...</instructions>` 注入 `contents[0].parts[0]`。既保留完整指令遵循能力，又避免 `systemInstruction` 字段或固定套话触发上游拦截。
 3. **WAF 敏感词洗白与抗零宽字符 Cloak 改写（同步 `agy-cli` & `opencode-antigravity-bridge`）**
@@ -210,3 +210,66 @@ npm run antigravity:smoke -- --model gemini-3.8-flash-low      # 发送最小连
 2. **`auto_mode_check_inferred` 成本治理**：若日志中 `auto_mode_check_inferred` 仍占高额未命中开销（因其请求体由客户端拼装滑动窗口摘要），可协助用户在 Magpie 路由层将该类请求路由到免费/低成本 Flash 模型，或在客户端侧调整 Auto Mode 检查策略。
 3. **长上下文空回复优雅自愈（已支持可配置时间门控）**：已新增 `emptyReplyMaxWaitMs`（`ANTIGRAVITY_EMPTY_REPLY_MAX_WAIT_MS`）、`emptyReplyRetryDelayMs` 与 `streamIdleTimeoutMs`（`ANTIGRAVITY_STREAM_IDLE_TIMEOUT_MS`）。默认保持 `0` 以避免未经授权的重复扣费；开启后在发送首个实质内容分片前门控空候选并在限定时间窗内退避/切号恢复。
 4. **上游 WAF 规则持续同步**：若后续出现剩余额度充足却报裸 `429 Resource has been exhausted` 的新客户端 Prompt（例如新版 Cursor / Claude Code 新增段落），优先对照 `magpie-community/plugins/packages/agy-cli` 与 `DylanLIiii/opencode-antigravity-bridge/cloak.mjs` 在 `lib/antigravity-mapper.mjs` 的 `CLOAK_REWRITES` 中增补等价改写并补充单测。
+
+
+---
+
+## 8. 2026-11-26 会话交接：已完成、实测结论与未完成任务
+
+> 本节记录最近一次会话（对官方 Antigravity v2.35.2 抓包对齐 + 协议自动同步）的真实状态。「已验证」指有命令输出或线上运行记录支撑；「未验证」必须由接手者自行确认，不要当作事实。
+
+### 8.1 已完成并已推送（`origin/main`，截至 `1c932a8`）
+
+- **线格式对齐（`cb02a42`）**：依据官方 `language_server.exe` v2.35.2（`cl=1029311855`）本地明文抓包：
+  - `lib/antigravity-mapper.mjs`：`tools` 改为单个 `[{ functionDeclarations: [...] }]`；`labels` 新增 `cascade_id` / `root_cascade_id`；`requestId` 末段 `step = contents.length`，`labels.last_step_index = contents.length - 1`，同会话多轮 `trajectory_id` 不再按用户轮次轮换（依据：三轮同 cascade 抓包 `trajectory_id` 恒定，`requestId` 末段为 `1/3/5`，`last_step_index` 为 `0/2/4`，`labels.request_id` 为 `<trajectory>-0/1/2`）。
+  - `lib/antigravity-oauth.mjs`：默认 `accept-encoding` 由 `gzip, deflate` 改为 `gzip`（官方抓包仅发 `gzip`）。
+  - `lib/antigravity.mjs`：`buildInferenceHeaders` 头顺序对齐为 `User-Agent`、`Authorization`、`Content-Type`（官方 H1 序为 `Host, User-Agent, Content-Length, Authorization, Content-Type, Accept-Encoding`）。
+  - 测试：`test/antigravity.test.mjs` 同步更新；`npm run check` 与 `npm test` 本地通过（Windows 上 8 项因平台条件跳过）。
+- **零凭据协议同步**：新增 `scripts/sync-antigravity-protocol.mjs` 与 `lib/antigravity-protocol.json`，并并入 `.github/workflows/antigravity-ua-sync.yml`（名称 `Sync Antigravity UA and Protocol`）。`force=true` 手动运行已验证成功（Run `45792259249`，bot 提交 `1c932a8`）。
+- **清理 AI Studio CI**：已删除 `studio.yml`、`publish-studio.yml`、`studio-official.yml`、`studio-upstream-watch.yml` 与 `test/studio-upstream-watch.test.mjs`；`publish-package.yml` 的 `official-studio` 任务改为三平台 `npm run check` / `npm test` / `npm pack --dry-run` 的 `verify` 任务。
+
+### 8.2 真实上游实测结论（使用真实账号 refresh token，经本机代理 `127.0.0.1:20122`）
+
+- OAuth `/token`：返回 `access_token`、`expires_in: 3599`、`scope`（`cclog`、`cloud-platform`、`experimentsandconfigs`、`userinfo.email`、`userinfo.profile`、`openid`）、`token_type: Bearer`、`id_token`。
+- `:loadCodeAssist` 返回 `currentTier` / `paidTier` / `allowedTiers` / `cloudaicompanionProject`；`:fetchAvailableModels` 返回 41 个模型，含 `quotaInfo{remainingFraction?,resetTime}`、`maxTokens`、`maxOutputTokens`、`apiProvider`、`vertexModelId`（5h 耗尽时 Gemini 模型会**省略 `remainingFraction`**，仅返回 `resetTime`）；`:retrieveUserQuotaSummary` 返回 Gemini 与 `Claude and GPT` 两组 `5h` / `weekly` 桶（5h 用完时 `gemini-5h.remainingFraction == 0`）。
+- 隐式缓存：同前缀同 `sessionId` 连续两轮，Gemini 第二轮 `cachedContentTokenCount: 8767`（总 10835），Claude 第二轮 `cachedContentTokenCount: 20162`（总 20187）；经 `forwardAntigravity` 完整映射链路（>66k tokens，3 轮含工具循环与追问）实测 `T1: 66727 -> T2: cached_tokens 66709 / 66810 (99.85%) -> T3: cached_tokens 66778 / 66935 (99.77%)`。
+- `safetySettings` 被接受（HTTP 200）；PDF `inlineData` 200；`fileData` 指向不存在 URL 返回 `404 NOT_FOUND`（服务端会主动拉取 URL）；非法 `generationConfig` 返回 `400 INVALID_ARGUMENT`；`v1internal` 端点全集中无独立文件上传接口。
+- **真实 `429` 池耗尽报文**（实测 Gemini 5h 池用尽）：`content-type: text/event-stream`，**无 `Retry-After` HTTP 头**；正文为 `status: "RESOURCE_EXHAUSTED"`，`details[0]`（`google.rpc.ErrorInfo`）含 `reason: "QUOTA_EXHAUSTED"`、`domain: "cloudcode-pa.googleapis.com"`、`metadata: { quotaResetDelay: "13m9.175270535s", quotaResetTimeStamp, uiMessage: "true", model }`，`details[1]`（`google.rpc.RetryInfo`）含 `retryDelay: "789.175270535s"`。
+- **`forwardAntigravity` 真实端到端验证**：
+  - 对耗尽的 `gemini-3.8-flash`：在 ~717ms 内迅速返回 HTTP `400`（`isLongQuotaExhausted` 判定为单池耗尽，未盲等 `retryDelay` 也未锁死同号下剩余 53% 额度的 Claude 池）。
+  - 对仍有额度的 `claude-sonnet-5-5`（`reasoning_effort: 'low'`，携带 2 个函数工具、新单 wrapper `tools`、新 `labels`、新 `requestId` 与 `accept-encoding: gzip`）：第 1 轮非流式 HTTP `200` 正常输出 `finish_reason: "tool_calls"`，第 2 轮工具结果回传 + 流式 SSE HTTP `200` 正常输出 OpenAI 流式文本。
+  - 对 `gpt-oss-120b-medium`（OpenAI-on-Vertex）：HTTP `200`，正常返回 `content`、`reasoning_content`、`finish_reason: "stop"` 与 `prompt_tokens_details.cached_tokens`。
+  - 对 Gemini Native 入口（`/models/claude-sonnet-5-5:generateContent` 与 `:streamGenerateContent?alt=sse`）：均返回 HTTP `200`，`unwrapGeminiNativeResponse` / `unwrapGeminiNativeSSE` 正常解包。
+  - 对冷却重置后的 Gemini 系列（`gemini-3.8-flash`, `reasoning_effort: 'low'`）：第 1 轮返回 `finish_reason: "tool_calls"` 并将真实 `thoughtSignature` 写入 `signature-cache.json`（条目数 `1`），第 2 轮带工具结果与签名透传流式返回 HTTP `200`；`tools: [{ type: 'web_search_20250305' }]` 路由为 `web_search` 并返回 HTTP `200`；`gemini-3.1-flash-image` 返回 HTTP `200` 与内联生图结果（`data:image/...`）。
+- **孤立 `language_server.exe` 真实工具循环与图片上传抓包**：
+  - 挂载本地工作区并真实执行 `read_file` 后发出的第 2 轮请求中，`requestId` 末段从 `1` 推进到 `3`（`contents.length`）、`labels.last_step_index` 从 `"0"` 推进到 `"2"`（`contents.length - 1`）、`labels.request_id` 为 `<trajectory>-1`，且**同一 execution 内不带 `last_execution_id`**（仅在开启新 `SendUserCascadeMessage` 对话轮次时出现），实测验证了 `cb02a42` 的步数规则。注：当模型返回的 `thoughtSignature` 非合法 base64 时，官方客户端会在解码 SSE 时报 `invalid value for bytes field thoughtSignature` 并终止执行。
+  - `SendUserCascadeMessage` 附带 `images` 时，客户端将图片保存至 `.user_uploaded/` 并在用户 `contents[0].parts` 中生成 `[{ text: ... }, { inlineData: { mimeType, data } }]`。
+- 取消：孤立 `language_server.exe` 上调用 `CancelCascadeInvocation` 后，本地 mock 端观察到客户端直接断开 SSE 连接（无额外上游取消请求）。
+
+### 8.3 未完成任务（按优先级）
+
+1. **【高】macOS CI 仍然红**：`Run test suite` 的 `Test (macos-15, Node 22)` 在 `44d8aac` 后再次被取消（Run `45792233011`），注解仍是 `The job was not acquired by Runner of type hosted even after multiple attempts`；该任务 `09:28:05Z` 开始、`09:43:06Z` 结束，恰好 15 分钟。**因此把 `timeout-minutes` 提到 30 对排队等待无效**（它只限制已开始的作业），`44d8aac` 里对 `test.yml` / `publish-package.yml` 的 `timeout-minutes: 30` 改动不能解决该问题；`matrix.exclude` 去掉 `macos-15 + Node 26.8.2` 只减少了排队数量。可选方案：改用 `macos-15-intel`、或把 macOS 设为非阻塞（`continue-on-error`）/ 仅在手动或发布流程运行；需要用户决定。同一问题在更早的 Run `45682632330` 也出现过。
+2. **【中】协议清单的顺序抖动**：`scripts/sync-antigravity-protocol.mjs` 的 `summarizeCapturedExchanges` 中 `observedEndpoints` 按到达顺序记录，`fetchAvailableModels` / `fetchUserInfo` 的先后受并发影响（Run `45792259249` 的 bot diff 已出现对调）。应对该数组排序，否则日常不带 `force` 的定时任务也可能因顺序变化产生无意义提交。
+3. **【中】协议清单未被消费**：`lib/antigravity-protocol.json` 目前只是快照，没有任何测试把它与映射器的实际输出对比。建议新增测试/CI 步骤：当清单中的 `labelKeys`、`toolsPacking`、`acceptEncoding`、`requestIdFormats` 与映射器不一致时报警。已知差异：清单 `labelKeys` 含 `last_execution_id`（已实测确认仅跨次 `SendUserCascadeMessage` 时由 `language_server` 发出，同一执行内工具循环不带），映射器目前不发送该键。
+4. **【中】`checkpoint` 轻量请求未实现**：官方在部分 cascade 中会额外发 `requestType: "checkpoint"`、`requestId: "checkpoint/<uuid>"`、无 `tools` / `labels` 的标题生成请求（早期两次抓包各出现一次；后续两次三轮探针里没有出现，触发条件**未确认**）；本插件不发。是否模拟需权衡（多一次请求 vs 更接近官方行为），未决定。
+5. **【中】`writeTrajectoryAcls` / `fetchUserInfo` / `listExperiments` 等伴生 RPC 未模拟**（见 §7「已知硬边界」），官方在已抓到的 cascade 里每次 agent 请求后都会调用 `:writeTrajectoryAcls`；本插件登录默认也不调用 `fetchUserInfo`。
+6. **【低】短时突发限流阈值、缓存 TTL 与 `isLongQuotaExhausted` 秒级边界**：5h 池耗尽 `429` 样本及 `retryDelay` 格式已实测拿下；未测项仅剩短时突发并发速率上限、缓存淘汰 TTL 与 `503 MODEL_CAPACITY_EXHAUSTED` 现场包。另实测确认 `isLongQuotaExhausted` 正则 `/Resets in \d+[hm]/i` 对 `<1m` 文本（如 `Resets in 45s`）不会转为 `400`（可视情况评估是否保持）。
+7. **【低】TLS 指纹**：官方 Go `language_server` 经代理的 ClientHello 为 `JA3 03117a8ed39ef02427ebbc39f121275c` / `JA4 t13d1312h1_f57a46bbacb6_f50d94e863eb`、`ALPN http/1.1`，Node 的指纹不同；纯 JS 无法对齐，仅作记录。
+8. **【低】AI Studio 代码仍在仓库**：本次只删除了 CI 工作流。`lib/studio*.mjs`、`scripts/studio*.mjs`、`patches/studio-*`、`docs/studio-release.md`、`LICENSE-AISTUDIO` 与 `index.mjs` 的 `AIStudioPlugin` 导出、`package.json` 的 `files` / scripts 均未动；`AGENTS.md` 的验证表仍引用 studio 测试。`backend.yml` / `publish-backend.yml`（`gemini-web` Go 后端）也还在，用户尚未回答是否同样删除。若要彻底移除须同步调整 `scripts/check-guardrails.mjs` 的闭包规则与 `test/*`。
+9. **【低】CI 注解**：`actions/checkout@v4` / `actions/setup-node@v4` 触发 Node.js 20 弃用警告，后续需升级版本。
+
+### 8.4 安全与清理提醒
+
+- 会话中用户在聊天里明文贴过一个真实 Google refresh token 用于测试，**建议用户在 Google 账号安全页撤销该授权**；该 token 未写入仓库或本文档。
+- 临时探针产物位于会话目录的 `scratch/`（含 `.pcapng` 抓包与捕获 JSON），不在仓库内；含真实账号元数据的 `real_upstream_capture.json` 已删除。
+- 本机数据目录 `~/.local/share/magpie-antigravity/`（`accounts.json`、`oauth-clients.json` 等）为用户私有，勿提交。
+
+### 8.5 接手后的最小验证流程
+
+```bash
+npm run check
+node --test test/antigravity.test.mjs test/antigravity-ua.test.mjs test/guardrails.test.mjs
+npm run interrogate -- --run
+node scripts/sync-antigravity-protocol.mjs --binary <官方 language_server 路径> --write --force   # 本机复测零凭据探针（会覆盖 lib/antigravity-protocol.json）
+gh workflow run antigravity-ua-sync.yml -f force=true                                                # 线上复测定时同步
+```
