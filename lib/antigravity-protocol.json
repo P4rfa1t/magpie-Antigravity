@@ -5,8 +5,8 @@
   "apiVersion": "v1internal",
   "observedEndpoints": [
     "POST /v1internal:loadCodeAssist",
-    "POST /v1internal:fetchUserInfo",
     "POST /v1internal:fetchAvailableModels",
+    "POST /v1internal:fetchUserInfo",
     "POST /v1internal:listExperiments",
     "GET /userinfo",
     "POST /v1internal:writeTrajectoryAcls",
@@ -168,5 +168,5 @@
     "hasStreamQueryAltSse": true
   },
   "source": "official-sync",
-  "updatedAt": 1795683863937
+  "updatedAt": 1795685379995
 }
