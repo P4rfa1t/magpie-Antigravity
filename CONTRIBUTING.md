@@ -2,7 +2,7 @@
 
 感谢使用和改进 `magpie-Antigravity`（npm 包名 `magpie-antigravity`，独立维护仓库：[P4rfa1t/magpie-Antigravity](https://github.com/P4rfa1t/magpie-Antigravity)）。清晰的反馈能显著缩短定位时间，中文或英文均可。
 
-> **请首先明确问题属于哪个 Provider：Antigravity (RT)（`antigravity-rt`）还是 Gemini Web（`gemini-web`）。**两者底层协议、鉴权方式与工具调用机制完全不同，请不要只写“Gemini 报错”。
+> **请首先明确问题属于哪个 Provider：Antigravity（`antigravity-rt`）还是 Gemini Web（`gemini-web`）。**两者底层协议、鉴权方式与工具调用机制完全不同，请不要只写“Gemini 报错”。
 
 ## 提交 Issue 前
 
@@ -30,7 +30,7 @@
 - Magpie / OpenCode 版本：
 - 插件版本 / Git Commit：
 - Provider（必须勾选一项）：
-  - [ ] Antigravity (RT) (`antigravity-rt`)
+  - [ ] Antigravity (`antigravity-rt`)
   - [ ] Gemini Web (`gemini-web`)
 - 完整模型 ID：
 - 代理 / 多账号 / 自定义插件选项：

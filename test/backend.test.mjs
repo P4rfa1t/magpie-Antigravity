@@ -1089,7 +1089,7 @@ describe('23. Plugin metadata for Magpie', () => {
     assert.equal(antigravity.auth.icon, PLUGIN_ICON);
   });
 
-  it('declares maxConcurrency of 2 for both Gemini Web and Antigravity (RT)', async () => {
+  it('declares maxConcurrency of 2 for both Gemini Web and Antigravity', async () => {
     const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
     assert.equal(pkg.magpie?.maxConcurrency, 2);
 

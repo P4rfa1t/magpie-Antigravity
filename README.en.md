@@ -4,9 +4,9 @@
 
 [中文](README.md) | English | [Contributing & Issue Guide](CONTRIBUTING.md) | [Technical Handoff](HANDOFF.md)
 
-A standalone, zero-dependency Google model provider plugin for [Magpie](https://usemagpie.ai/) and **OpenCode** (npm package `magpie-antigravity`). Centered on **Antigravity (RT)** (`antigravity-rt`) — direct Node/Bun access to Google Cloud Code `v1internal` via Google OAuth browser authorization and Refresh Tokens with **no local binary** and no extra CLI system-prompt overhead, delivering **Gemini 4**, **Claude 5.5**, **GPT-OSS**, native function calling, image generation, high-hit implicit prefix caching, and automated daily zero-credential UA/protocol synchronization — alongside **Gemini Web** (`gemini-web`) as an optional web-cookie channel.
+A standalone, zero-dependency Google model provider plugin for [Magpie](https://usemagpie.ai/) and **OpenCode** (npm package `magpie-antigravity`). Centered on **Antigravity** (`antigravity-rt`) — direct Node/Bun access to Google Cloud Code `v1internal` via Google OAuth browser authorization and Refresh Tokens with **no local binary** and no extra CLI system-prompt overhead, delivering **Gemini 4**, **Claude 5.5**, **GPT-OSS**, native function calling, image generation, high-hit implicit prefix caching, and automated daily zero-credential UA/protocol synchronization — alongside **Gemini Web** (`gemini-web`) as an optional web-cookie channel.
 
-> **Standalone Repository Notice:** `P4rfa1t/magpie-Antigravity` is now maintained as an independent repository (no longer a fork). The legacy AI Studio (`ai-studio`) module has been removed to focus cleanly on **Antigravity (RT)** reliability, protocol alignment, and **Gemini Web** support.
+> **Standalone Repository Notice:** `P4rfa1t/magpie-Antigravity` is now maintained as an independent repository (no longer a fork). The legacy AI Studio (`ai-studio`) module has been removed to focus cleanly on **Antigravity** reliability, protocol alignment, and **Gemini Web** support.
 
 ---
 
@@ -14,7 +14,7 @@ A standalone, zero-dependency Google model provider plugin for [Magpie](https://
 
 The plugin provides two independent providers that can be used individually or side by side:
 
-| Feature | Antigravity (RT) (`antigravity-rt`) — **Primary** | Gemini Web (`gemini-web`) — Web Fallback |
+| Feature | Antigravity (`antigravity-rt`) — **Primary** | Gemini Web (`gemini-web`) — Web Fallback |
 | :--- | :--- | :--- |
 | **Best for** | **Primary chat, coding agents, multi-model routing (no local binary)** | Casual chat & reusing web subscription quota |
 | **Key models** | `gemini-4-neon`, `gemini-4-hydrogen`, `gemini-4-argon`, `gemini-3.8-flash`, `claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-oss-120b-medium` (live upstream catalog) | `gemini-4-hydrogen` (signed-in, incl. free accounts), `gemini-4-carbon` / `gemini-4-neon` (paid / Ultra), `gemini-3.6-flash`, `gemini-3.5-flash-lite` |
@@ -43,9 +43,9 @@ magpie plugin add ./magpie-Antigravity
 
 ---
 
-### Option 1: Antigravity (RT) (`antigravity-rt` — Recommended)
+### Option 1: Antigravity (`antigravity-rt` — Recommended)
 
-1. Under **From plugins** in Magpie, select **Antigravity (RT)** (uses a dedicated ID so it does not collide with Magpie's built-in `Antigravity` subscription) and choose one of the sign-in flows:
+1. Under **From plugins** in Magpie, select **Antigravity** (uses a dedicated ID `antigravity-rt` so it does not collide with Magpie's built-in `Antigravity` subscription) and choose one of the sign-in flows:
    - **「通过 Google OAuth 浏览器授权登录（推荐）」** (Browser OAuth with auto loopback callback): starts a local listener on `http://localhost:<port>/oauth-callback`, opens Google sign-in in your browser, and automatically captures the callback to exchange for a Refresh Token;
    - **「通过 Google OAuth 授权（手动粘贴回调链接 / Code）」** (auto-promoted first inside containers): open the OAuth URL in any local browser, then paste the redirected callback URL (or raw authorization code) into Magpie;
    - **「通过 Refresh Token 登录（支持批量）」**: paste a single `1//03...` token, JSON array `[{"refresh_token":"1//03..."}, ...]`, or any text containing tokens (compatible with Antigravity Tools / Antigravity-Manager exports).
@@ -101,7 +101,7 @@ npm run antigravity:sync-protocol                              # Run zero-creden
 ## Configuration & Advanced Usage
 
 <details>
-<summary><b>⚙️ Antigravity (RT) Plugin Options & Environment Variables</b> (all 28 `antigravity.*` keys)</summary>
+<summary><b>⚙️ Antigravity Plugin Options & Environment Variables</b> (all 28 `antigravity.*` keys)</summary>
 
 <br>
 
@@ -157,7 +157,7 @@ Configure via `magpie plugin options magpie-antigravity '{"antigravity":{...}}'`
 
 <br>
 
-1. **Prefer Antigravity (RT):** Pure headless OAuth Refresh Token flow requires no local browser, no `127.0.0.1` web UI, and no external binaries.
+1. **Prefer Antigravity:** Pure headless OAuth Refresh Token flow requires no local browser, no `127.0.0.1` web UI, and no external binaries.
 2. **Container proxy addresses:** Inside bridge-network containers, `127.0.0.1` points to the container itself. Use `http://host.docker.internal:<port>` on Docker Desktop (macOS/Windows) or add `--add-host=host.docker.internal:host-gateway` / `--network host` on Linux.
 3. **Persistence & zombie reaping:** Persist `ANTIGRAVITY_DATA_DIR` and `GEMINI_WEB_DATA_DIR` via volumes. When running `gemini-web` with Magpie as PID 1, pass `--init` (`init: true` in Compose); `lib/proc.mjs` also detects Linux `Z`/`X` zombie processes safely.
 

@@ -1,14 +1,14 @@
 # Project Handoff & Technical Analysis (`magpie-Antigravity`)
 
-> 本文档面向后续接手本项目的 AI 模型与开发者，完整汇总独立化后仓库架构、工程红线、`Antigravity (RT)` 直连供应商协议与防封伪装机制、隐式缓存诊断、全量配置参考、`Gemini Web` 共享基础设施，以及已验证结论与待办边界。
+> 本文档面向后续接手本项目的 AI 模型与开发者，完整汇总独立化后仓库架构、工程红线、`Antigravity` 直连供应商协议与防封伪装机制、隐式缓存诊断、全量配置参考、`Gemini Web` 共享基础设施，以及已验证结论与待办边界。
 
 ---
 
 ## 1. 独立项目概览与双 Provider 架构
 
-`magpie-Antigravity`（npm 包名 `magpie-antigravity`，当前版本 `0.17.0`）现为 `P4rfa1t/magpie-Antigravity` 独立维护仓库，面向 **Magpie** 与 **OpenCode** 提供零外部 npm 依赖的 Google 模型接入能力（仅使用 `node:*` 内置模块，兼容 `Node >= 22` 与 Magpie 内置 `Bun` 运行时；`bun:sqlite` 仅在 `lib/usage.mjs` 按 `globalThis.Bun` 条件加载）。
+`magpie-Antigravity`（npm 包名 `magpie-antigravity`，当前版本 `1.0.0`）现为 `P4rfa1t/magpie-Antigravity` 独立维护仓库，面向 **Magpie** 与 **OpenCode** 提供零外部 npm 依赖的 Google 模型接入能力（仅使用 `node:*` 内置模块，兼容 `Node >= 22` 与 Magpie 内置 `Bun` 运行时；`bun:sqlite` 仅在 `lib/usage.mjs` 按 `globalThis.Bun` 条件加载）。
 
-> **独立化变更说明**：仓库已移除原 AI Studio (`ai-studio` / `AIStudio2API`) 相关代码、补丁、脚本与测试，并将共享进程身份校验函数（`verifyProcessIdentity`、`processPids`、`listenerPids`）迁移至 `lib/proc.mjs`。当前以 **Antigravity (RT)** 为核心主力，同时保留 **Gemini Web** 作为网页版 Cookie 补充通道。
+> **独立化变更说明**：仓库已移除原 AI Studio (`ai-studio` / `AIStudio2API`) 相关代码、补丁、脚本与测试，并将共享进程身份校验函数（`verifyProcessIdentity`、`processPids`、`listenerPids`）迁移至 `lib/proc.mjs`。当前以 **Antigravity** 为核心主力，同时保留 **Gemini Web** 作为网页版 Cookie 补充通道。
 
 入口 `index.mjs` 导出两个相互独立、可共存的 Provider 插件：
 
@@ -41,7 +41,7 @@ npm run interrogate -- --run                                 # 执行护栏 + �
 
 ---
 
-## 3. `Antigravity (RT)` 子系统深度拆解
+## 3. `Antigravity` 子系统深度拆解
 
 ### 3.1 认证、凭据存储与网络代理 (`lib/antigravity-oauth.mjs`)
 
@@ -104,7 +104,7 @@ npm run interrogate -- --run                                 # 执行护栏 + �
 
 ---
 
-## 5. `Antigravity (RT)` 配置项与 CLI 运维速查
+## 5. `Antigravity` 配置项与 CLI 运维速查
 
 ### 5.1 全量 `options.antigravity`（28 项）与环境变量
 

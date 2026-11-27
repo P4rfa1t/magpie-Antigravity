@@ -1,7 +1,7 @@
 {
   "name": "magpie-antigravity",
-  "version": "0.17.0",
-  "description": "Antigravity (RT) direct OAuth and Gemini Web provider plugin for Magpie & OpenCode (Gemini 4, Claude 5.5, GPT-OSS, image generation, implicit prefix caching, and zero-credential protocol sync)",
+  "version": "1.0.0",
+  "description": "Antigravity direct OAuth and Gemini Web provider plugin for Magpie & OpenCode (Gemini 4, Claude 5.5, GPT-OSS, image generation, implicit prefix caching, and zero-credential protocol sync)",
   "type": "module",
   "main": "./index.mjs",
   "exports": "./index.mjs",
