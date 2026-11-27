@@ -10,18 +10,27 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { GeminiWebPlugin, AntigravityPlugin } from '../index.mjs';
 import {
+  DEFAULT_MANUAL_OAUTH_PORT,
   GCP_OAUTH_CLIENT,
   NATIVE_OAUTH_USER_AGENT,
+  OAUTH_CALLBACK_PATH,
+  OAUTH_SCOPES,
   PERSONAL_OAUTH_CLIENT,
+  buildOAuthAuthorizeUrl,
+  createPkcePair,
   currentEgressUserAgent,
   currentOAuthUserAgent,
   fetchWithProxy,
   loadAntigravityAccounts,
   parseAvailableCredits,
+  parseOAuthCallbackInput,
   parseRefreshTokenInput,
   refreshAccessToken,
   removeAntigravityAccount,
+  resolveOAuthClientForType,
   saveAntigravityAccount,
+  startOAuthCallbackServer,
+  verifyAuthorizationCode,
   verifyRefreshToken
 } from '../lib/antigravity-oauth.mjs';
 import {
@@ -57,6 +66,12 @@ import {
 
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-antigravity-test-'));
+}
+
+function findAuthMethod(plugin, pattern) {
+  const method = plugin.auth.methods.find(m => pattern.test(m.label));
+  assert.ok(method, `Expected auth method matching ${pattern}`);
+  return method;
 }
 
 const SAMPLE_CATALOG = {
@@ -590,7 +605,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     assert.equal(cfg.provider[ANTIGRAVITY_ID].name, 'Antigravity (RT)');
     assert.equal(ANTIGRAVITY_ID, 'antigravity-rt');
 
-    const flow = await plugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const flow = await findAuthMethod(plugin, /Refresh Token/).authorize({ clientType: 'personal', proxy: '' });
     assert.equal(flow.method, 'code');
     const signIn = await flow.callback(JSON.stringify([
       { refresh_token: '1//03acc1' },
@@ -664,7 +679,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
       throw new Error(`Unexpected URL: ${url}`);
     };
     const plugin = await AntigravityPlugin({}, { antigravity: { dataDir: dir }, fetchFn });
-    const method = plugin.auth.methods[0];
+    const method = findAuthMethod(plugin, /Refresh Token/);
     assert.equal((await method.ask({ clientType: 'personal', proxy: '' })).key, 'clientId');
     assert.equal((await method.ask({ clientType: 'personal', proxy: '', clientId: 'cid' })).key, 'clientSecret');
     assert.equal(await method.ask({ clientType: 'personal', proxy: '', clientId: '' }), null);
@@ -716,7 +731,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
       rateLimitRetries: 1,
       fetchFn
     });
-    const flow = await plugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const flow = await findAuthMethod(plugin, /Refresh Token/).authorize({ clientType: 'personal', proxy: '' });
     const signIn = await flow.callback('1//03retry');
     const loader = await plugin.auth.loader(async () => ({ type: 'api', key: signIn.key, metadata: signIn.metadata }));
 
@@ -793,7 +808,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
       rateLimitRetries: 1,
       fetchFn
     });
-    const flow = await plugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const flow = await findAuthMethod(plugin, /Refresh Token/).authorize({ clientType: 'personal', proxy: '' });
     const signIn = await flow.callback('1//03partial');
     const auth = { type: 'api', key: signIn.key, metadata: signIn.metadata };
 
@@ -881,7 +896,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
       rateLimitRetries: 2,
       fetchFn
     });
-    const flow = await plugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const flow = await findAuthMethod(plugin, /Refresh Token/).authorize({ clientType: 'personal', proxy: '' });
     const signIn = await flow.callback('1//03large');
     const loader = await plugin.auth.loader(async () => ({ type: 'api', key: signIn.key, metadata: signIn.metadata }));
 
@@ -918,7 +933,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
       antigravity: { dataDir: dir, clientId: 'cid', clientSecret: 'csec' },
       fetchFn
     });
-    const flow = await plugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const flow = await findAuthMethod(plugin, /Refresh Token/).authorize({ clientType: 'personal', proxy: '' });
     const signIn = await flow.callback('1//03cache');
     const loader = await plugin.auth.loader(async () => ({ type: 'api', key: signIn.key, metadata: signIn.metadata }));
 
@@ -2433,7 +2448,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
         throw new Error(`Unexpected URL: ${url}`);
       }
     });
-    const parityFlow = await parityPlugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const parityFlow = await findAuthMethod(parityPlugin, /Refresh Token/).authorize({ clientType: 'personal', proxy: '' });
     const paritySignIn = await parityFlow.callback('1//03parity');
     const parityLoader = await parityPlugin.auth.loader(async () => ({ type: 'api', key: paritySignIn.key, metadata: paritySignIn.metadata }));
     const parityRes = await parityLoader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
@@ -2483,7 +2498,7 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
       rateLimitRetries: 0,
       fetchFn
     });
-    const flow = await plugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const flow = await findAuthMethod(plugin, /Refresh Token/).authorize({ clientType: 'personal', proxy: '' });
     const signIn = await flow.callback('1//03seconds');
     const loader = await plugin.auth.loader(async () => ({ type: 'api', key: signIn.key, metadata: signIn.metadata }));
     const res = await loader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
@@ -2494,5 +2509,212 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
     assert.equal(res.status, 400);
     const body = await res.json();
     assert.match(body.error.message, /配额池已用尽/);
+  });
+});
+
+describe('Antigravity Tools Google OAuth browser authorization flow', () => {
+  it('builds valid PKCE authorize URL and parses callback URLs, query strings, raw codes, and errors', () => {
+    const pkce = createPkcePair();
+    assert.ok(pkce.codeVerifier.length >= 43);
+    assert.ok(pkce.codeChallenge.length >= 43);
+    assert.equal(pkce.codeChallengeMethod, 'S256');
+    assert.ok(pkce.state.length >= 24);
+
+    const authUrl = new URL(buildOAuthAuthorizeUrl({
+      clientId: 'client-123.apps.googleusercontent.com',
+      redirectUri: `http://localhost:${DEFAULT_MANUAL_OAUTH_PORT}${OAUTH_CALLBACK_PATH}`,
+      state: pkce.state,
+      codeChallenge: pkce.codeChallenge,
+      loginHint: 'user@gmail.com'
+    }));
+    assert.equal(authUrl.origin + authUrl.pathname, 'https://accounts.google.com/o/oauth2/v2/auth');
+    assert.equal(authUrl.searchParams.get('client_id'), 'client-123.apps.googleusercontent.com');
+    assert.equal(authUrl.searchParams.get('redirect_uri'), `http://localhost:${DEFAULT_MANUAL_OAUTH_PORT}${OAUTH_CALLBACK_PATH}`);
+    assert.equal(authUrl.searchParams.get('response_type'), 'code');
+    assert.equal(authUrl.searchParams.get('access_type'), 'offline');
+    assert.equal(authUrl.searchParams.get('prompt'), 'consent');
+    assert.equal(authUrl.searchParams.get('include_granted_scopes'), 'true');
+    assert.equal(authUrl.searchParams.get('state'), pkce.state);
+    assert.equal(authUrl.searchParams.get('code_challenge'), pkce.codeChallenge);
+    assert.equal(authUrl.searchParams.get('code_challenge_method'), 'S256');
+    assert.equal(authUrl.searchParams.get('login_hint'), 'user@gmail.com');
+    const scopes = authUrl.searchParams.get('scope').split(' ');
+    for (const s of OAUTH_SCOPES) {
+      assert.ok(scopes.includes(s), `missing OAuth scope ${s}`);
+    }
+
+    const fromUrl = parseOAuthCallbackInput(
+      `http://localhost:51121/oauth-callback?state=${encodeURIComponent(pkce.state)}&code=4%2F0Abcd1234&scope=openid`,
+      { expectedState: pkce.state }
+    );
+    assert.equal(fromUrl.code, '4/0Abcd1234');
+    assert.equal(fromUrl.state, pkce.state);
+    assert.equal(fromUrl.redirectUri, 'http://localhost:51121/oauth-callback');
+
+    const fromQuery = parseOAuthCallbackInput(`?code=4/0Aquery&state=${encodeURIComponent(pkce.state)}`, { expectedState: pkce.state });
+    assert.equal(fromQuery.code, '4/0Aquery');
+
+    const fromRaw = parseOAuthCallbackInput('4/0ArawCodeOnly', { expectedState: pkce.state });
+    assert.equal(fromRaw.code, '4/0ArawCodeOnly');
+
+    assert.throws(
+      () => parseOAuthCallbackInput(`http://localhost:51121/oauth-callback?code=4/0Abad&state=wrong-state`, { expectedState: pkce.state }),
+      /state 校验不匹配/
+    );
+    assert.throws(
+      () => parseOAuthCallbackInput('http://localhost:51121/oauth-callback?error=access_denied&error_description=user_cancelled'),
+      /access_denied/
+    );
+  });
+
+  it('captures browser loopback callback, ignores bad state, and rejects on OAuth error', async () => {
+    const server = await startOAuthCallbackServer({ state: 'expected-state-123', timeoutMs: 10000 });
+    try {
+      assert.ok(server.port > 0);
+      assert.equal(server.redirectUri, `http://localhost:${server.port}${OAUTH_CALLBACK_PATH}`);
+
+      // Bad state returns HTTP 400 and keeps server listening
+      const badStateRes = await fetch(`http://127.0.0.1:${server.port}${OAUTH_CALLBACK_PATH}?code=bad&state=wrong`);
+      assert.equal(badStateRes.status, 400);
+      assert.match(await badStateRes.text(), /状态校验失败/);
+
+      // Matching state + code returns HTTP 200 and resolves waitForCode()
+      const waitPromise = server.waitForCode();
+      const okRes = await fetch(`http://127.0.0.1:${server.port}${OAUTH_CALLBACK_PATH}?code=4%2F0AgoodCode&state=expected-state-123`);
+      assert.equal(okRes.status, 200);
+      assert.match(await okRes.text(), /授权成功/);
+      const got = await waitPromise;
+      assert.equal(got.code, '4/0AgoodCode');
+      assert.equal(got.state, 'expected-state-123');
+      assert.equal(got.redirectUri, server.redirectUri);
+    } finally {
+      await server.close();
+    }
+
+    const errServer = await startOAuthCallbackServer({ state: 'err-state', timeoutMs: 10000 });
+    try {
+      const waitErr = errServer.waitForCode();
+      const errRes = await fetch(`http://127.0.0.1:${errServer.port}${OAUTH_CALLBACK_PATH}?error=access_denied&state=err-state`);
+      assert.equal(errRes.status, 400);
+      await assert.rejects(waitErr, /access_denied/);
+    } finally {
+      await errServer.close();
+    }
+  });
+
+  it('completes end-to-end Google OAuth browser auto-callback and manual code fallback via AntigravityPlugin', async () => {
+    const dir = makeTempDir();
+    const tokenRequests = [];
+    let returnRefreshToken = true;
+
+    const fetchFn = async (url, init = {}) => {
+      if (String(url).includes('oauth2.googleapis.com/token')) {
+        const bodyParams = new URLSearchParams(String(init.body || ''));
+        tokenRequests.push(Object.fromEntries(bodyParams.entries()));
+        return Response.json({
+          access_token: 'tok-oauth-1',
+          ...(returnRefreshToken ? { refresh_token: '1//03oauth_rt_1' } : {}),
+          expires_in: 3599,
+          token_type: 'Bearer'
+        });
+      }
+      if (String(url).includes('/userinfo')) {
+        return Response.json({ email: 'oauth-user@gmail.com', name: 'OAuth User' });
+      }
+      if (String(url).includes(':loadCodeAssist')) {
+        return Response.json({ cloudaicompanionProject: 'proj-oauth-1', currentTier: { id: 'standard-tier' } });
+      }
+      if (String(url).includes(':fetchAvailableModels')) {
+        return Response.json(SAMPLE_CATALOG);
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    const plugin = await AntigravityPlugin({}, {
+      antigravity: { dataDir: dir, clientId: 'personal-cid', clientSecret: 'personal-csec' },
+      oauthTimeoutMs: 15000,
+      fetchFn
+    });
+
+    // Strict per-type client prompt check: personal configured must still prompt for enterprise clientId/clientSecret
+    const autoMethod = findAuthMethod(plugin, /浏览器授权登录/);
+    const manualMethod = findAuthMethod(plugin, /手动粘贴回调链接|粘贴回调链接/);
+    assert.equal(await autoMethod.ask({ clientType: 'personal', proxy: '' }), null);
+    assert.equal((await autoMethod.ask({ clientType: 'enterprise', proxy: '' })).key, 'clientId');
+    assert.equal((await autoMethod.ask({ clientType: 'enterprise', proxy: '', clientId: 'gcp-cid' })).key, 'clientSecret');
+    assert.equal(resolveOAuthClientForType({ dataDir: dir, clientType: 'enterprise', env: {} }), null);
+
+    // 1. Browser OAuth auto loopback flow (method: 'auto')
+    const autoFlow = await autoMethod.authorize({ clientType: 'personal', proxy: '' });
+    assert.equal(autoFlow.method, 'auto');
+    const autoAuthUrl = new URL(autoFlow.url);
+    const autoRedirect = autoAuthUrl.searchParams.get('redirect_uri');
+    const autoState = autoAuthUrl.searchParams.get('state');
+    assert.match(autoRedirect, /^http:\/\/localhost:\d+\/oauth-callback$/);
+
+    const callbackPromise = autoFlow.callback();
+    const browserHit = await fetch(`${autoRedirect.replace('localhost', '127.0.0.1')}?code=4%2F0AbrowserCode&state=${encodeURIComponent(autoState)}`);
+    assert.equal(browserHit.status, 200);
+    const autoSignIn = await callbackPromise;
+    assert.equal(autoSignIn.type, 'success');
+    assert.equal(autoSignIn.key, '1//03oauth_rt_1');
+    assert.equal(autoSignIn.metadata.email, 'oauth-user@gmail.com');
+    assert.equal(autoSignIn.metadata.projectId, 'proj-oauth-1');
+
+    assert.equal(tokenRequests[0].grant_type, 'authorization_code');
+    assert.equal(tokenRequests[0].code, '4/0AbrowserCode');
+    assert.equal(tokenRequests[0].redirect_uri, autoRedirect);
+    assert.equal(tokenRequests[0].client_id, 'personal-cid');
+    assert.equal(tokenRequests[0].client_secret, 'personal-csec');
+    assert.ok(tokenRequests[0].code_verifier);
+
+    const saved = loadAntigravityAccounts(dir);
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].refreshToken, '1//03oauth_rt_1');
+
+    // 2. Manual callback URL paste flow (method: 'code') + saves prompt-entered enterprise client credentials
+    const manualFlow = await manualMethod.authorize({
+      clientType: 'enterprise',
+      proxy: '',
+      clientId: 'gcp-cid',
+      clientSecret: 'gcp-csec'
+    });
+    assert.equal(manualFlow.method, 'code');
+    const manualAuthUrl = new URL(manualFlow.url);
+    const manualState = manualAuthUrl.searchParams.get('state');
+    assert.equal(
+      manualAuthUrl.searchParams.get('redirect_uri'),
+      `http://localhost:${DEFAULT_MANUAL_OAUTH_PORT}${OAUTH_CALLBACK_PATH}`
+    );
+
+    // Mismatched state fails cleanly without calling token endpoint
+    const badStateSignIn = await manualFlow.callback(`http://localhost:${DEFAULT_MANUAL_OAUTH_PORT}${OAUTH_CALLBACK_PATH}?code=4/0Abad&state=wrong`);
+    assert.equal(badStateSignIn.type, 'failed');
+    assert.match(badStateSignIn.error, /state 校验不匹配/);
+
+    // Valid manual paste succeeds
+    const okManualSignIn = await manualFlow.callback(
+      `http://localhost:${DEFAULT_MANUAL_OAUTH_PORT}${OAUTH_CALLBACK_PATH}?code=4%2F0AmanualCode&state=${encodeURIComponent(manualState)}`
+    );
+    assert.equal(okManualSignIn.type, 'success');
+    assert.equal(tokenRequests[1].client_id, 'gcp-cid');
+    assert.equal(tokenRequests[1].client_secret, 'gcp-csec');
+    assert.equal(resolveOAuthClientForType({ dataDir: dir, clientType: 'enterprise', env: {} })?.clientId, 'gcp-cid');
+
+    // 3. Missing refresh_token produces clear guidance error
+    returnRefreshToken = false;
+    await assert.rejects(
+      verifyAuthorizationCode({
+        code: '4/0AnoRt',
+        redirectUri: `http://localhost:${DEFAULT_MANUAL_OAUTH_PORT}${OAUTH_CALLBACK_PATH}`,
+        clientType: 'personal',
+        customClientId: 'personal-cid',
+        customClientSecret: 'personal-csec',
+        dataDir: dir,
+        env: {},
+        fetchFn
+      }),
+      /未返回 refresh_token/
+    );
   });
 });

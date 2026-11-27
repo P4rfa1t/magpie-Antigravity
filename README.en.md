@@ -22,7 +22,7 @@ The plugin provides two independent providers that can be used individually or s
 | **Thinking levels** | `minimal` / `low` / `medium` / `high` / `xhigh` / `max` (auto-folded & mapped per model) | `low` (base) / `medium` (`-thinking-medium`, `gemini-4-argon` only) / `high` (`-thinking` extended thinking) |
 | **Image input** | Enabled by default; multimodal chat & PDF `inlineData` | Enabled by default; chat models read images (needs a signed-in cookie) |
 | **Image generation** | `gemini-3.1-flash-image` (OpenAI & Gemini Native endpoints) | Not supported |
-| **Sign-in method** | **Paste Google OAuth Refresh Token** (single `1//...`, JSON array batch, or auto-extracted text) | Copy `cookie` from a private/incognito `gemini.google.com` window |
+| **Sign-in method** | **Google OAuth browser authorization** (auto loopback callback / manual callback URL or code paste) & **Refresh Token import** (single / JSON batch) | Copy `cookie` from a private/incognito `gemini.google.com` window |
 | **Usage cards** | Syncs **5-hour** & **weekly** quotas (Gemini / Claude & GPT / Argon, informational `aside: true`) | Syncs **5-hour** & **weekly** usage and reset times from the web |
 | **Local dependency** | **None required** (direct Node/Bun fetch to `v1internal` with ALPN `h2` proxy pooling) | `gemini-web2api-go` (local Go daemon; supports official upstream or self-built optimized binary) |
 
@@ -45,18 +45,17 @@ magpie plugin add ./magpie-gemini-web
 
 ### Option 1: Antigravity (RT) (`antigravity-rt` — Recommended)
 
-1. Under **From plugins** in Magpie, select **Antigravity (RT)** (uses a dedicated ID so it does not collide with Magpie's built-in `Antigravity` subscription) and choose **「通过 Refresh Token 登录（支持批量）」** (Sign in with Refresh Token).
-2. Choose your account type (**Personal** for standard Gmail accounts, or **Enterprise / GCP (Vertex AI)**) and optionally enter a proxy URL (also configurable via `ANTIGRAVITY_PROXY` or plugin option `antigravity.proxy`).
+1. Under **From plugins** in Magpie, select **Antigravity (RT)** (uses a dedicated ID so it does not collide with Magpie's built-in `Antigravity` subscription) and choose one of the sign-in flows:
+   - **「通过 Google OAuth 浏览器授权登录（推荐）」** (Browser OAuth with auto loopback callback): starts a local listener on `http://localhost:<port>/oauth-callback`, opens Google sign-in in your browser, and automatically captures the callback to exchange for a Refresh Token;
+   - **「通过 Google OAuth 授权（手动粘贴回调链接 / Code）」** (auto-promoted first inside containers): open the OAuth URL in any local browser, then paste the redirected callback URL (or raw authorization code) into Magpie;
+   - **「通过 Refresh Token 登录（支持批量）」**: paste a single `1//03...` token, JSON array `[{"refresh_token":"1//03..."}, ...]`, or any text containing tokens (compatible with Antigravity Tools / Antigravity-Manager exports).
+2. Choose your account type (**Personal** for standard Gmail accounts, or **Enterprise / GCP (Vertex AI)**) and optionally enter a proxy URL (the browser sign-in page reaches Google directly; token exchange and API traffic use your configured proxy, also configurable via `ANTIGRAVITY_PROXY` or `antigravity.proxy`).
 3. **Provide matching Google OAuth client credentials** (no `client_id` / `client_secret` are hardcoded in this repo) via any of:
-   - Enter them in the interactive sign-in prompts (saved locally to `~/.local/share/magpie-antigravity/oauth-clients.json` after verification);
+   - Enter them in the interactive sign-in prompts (saved per account type to `~/.local/share/magpie-antigravity/oauth-clients.json` after verification);
    - Set `ANTIGRAVITY_OAUTH_CLIENT_ID` / `ANTIGRAVITY_OAUTH_CLIENT_SECRET` (optional `ANTIGRAVITY_GCP_CLIENT_ID` / `ANTIGRAVITY_GCP_CLIENT_SECRET`, or `ANTIGRAVITY_OAUTH_CLIENTS`);
    - Pre-configure via CLI: `npm run antigravity:oauth -- --client-id <id> --client-secret <secret>`;
-   - Or include `client_id` and `client_secret` inside your pasted JSON payload.
-4. Paste your Refresh Token (compatible with Antigravity Tools / Antigravity-Manager exports):
-   - Single token: `1//03...`
-   - JSON array: `[{"refresh_token":"1//03..."}, ...]`
-   - Any text containing `1//...` tokens (automatically extracted and deduplicated)
-5. The plugin exchanges the refresh token for a short-lived `access_token`, provisions or resolves `cloudaicompanionProject` via `:loadCodeAssist` / `:onboardUser`, validates models, and saves accounts locally to `~/.local/share/magpie-antigravity/accounts.json` (`ANTIGRAVITY_DATA_DIR` overrides this path).
+   - Or include `client_id` and `client_secret` inside your pasted Refresh Token JSON payload.
+4. The plugin exchanges the token for a short-lived `access_token`, provisions or resolves `cloudaicompanionProject` via `:loadCodeAssist` / `:onboardUser`, validates models, and saves accounts locally to `~/.local/share/magpie-antigravity/accounts.json` with `0o700`/`0o600` permissions (`ANTIGRAVITY_DATA_DIR` overrides this path).
 
 #### Key Capabilities
 
@@ -69,6 +68,7 @@ magpie plugin add ./magpie-gemini-web
 ```bash
 npm run antigravity:status                                     # Inspect dataDir, active Egress/OAuth UAs, cache & saved accounts
 npm run antigravity:oauth -- --client-id <ID> --client-secret <SECRET>
+npm run antigravity:oauth-login -- --proxy http://127.0.0.1:7890 # Open browser for Google OAuth sign-in (--no-browser / --code supported)
 npm run antigravity:login -- "1//03..." --proxy http://127.0.0.1:7890
 npm run antigravity:models                                     # Print aggregated models and thinking variants
 npm run antigravity:quota                                      # Inspect live 5h / weekly quota buckets

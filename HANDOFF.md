@@ -46,6 +46,10 @@ npm run interrogate -- --run                                 # 执行护栏 + �
 ### 3.1 认证、凭据存储与网络代理 (`lib/antigravity-oauth.mjs`)
 
 - **零硬编码 OAuth Secret**：源码中绝不提交 Google OAuth `client_id` / `client_secret`。读取优先级：插件选项 `options.antigravity` > 环境变量 > 本机 `${dataDir}/oauth-clients.json`（默认 `~/.local/share/magpie-antigravity`，`ANTIGRAVITY_DATA_DIR` 覆盖）> 导入 JSON 包内嵌凭据（验证成功后自动以 `0o700`/`0o600` 落盘）。
+- **浏览器 OAuth 2.0 + PKCE 授权流程 (`buildOAuthAuthorizeUrl`, `startOAuthCallbackServer`, `parseOAuthCallbackInput`, `exchangeAuthorizationCode`, `verifyAuthorizationCode`)**：对齐 Antigravity Tools 的双模授权体验：
+  - 使用 `https://accounts.google.com/o/oauth2/v2/auth`、`S256` PKCE、`state`（`crypto.timingSafeEqual` 校验）、`access_type=offline`、`prompt=consent` 与全部 5 个官方 Scope（`cloud-platform`、`userinfo.email`、`userinfo.profile`、`cclog`、`experimentsandconfigs`）。
+  - 自动模式启动双栈本地回环回调服务（`127.0.0.1` 随机端口 + best-effort `::1` 同端口，`http://localhost:<port>/oauth-callback`），响应安全 HTML 并关闭连接（`closeAllConnections`）；手动兜底模式使用固定端口 `51121`（`DEFAULT_MANUAL_OAUTH_PORT`）并支持粘贴完整回调 URL、查询串或裸 Authorization Code。
+  - 按账号类型严格匹配客户端凭据（`resolveOAuthClientForType` / `hasConfiguredOAuthClientForType`），并在拿到 `refresh_token` 后通过共享 `completeAccountVerification` 完成 `:loadCodeAssist` / `:onboardUser` / 模型目录校验与落盘。
 - **多格式 Refresh Token 导入 (`parseRefreshTokenPackage`)**：兼容单条 `1//...` Token、Antigravity-Manager 导出的 JSON 数组、旧版插件记录、`agy` 原生 `antigravity-oauth-token` 文件及 `go-keyring-base64:` 编码内容，自动提取并去重。
 - **Token 刷新与双客户端绑定 (`ensureFreshAccountToken`)**：在过期前 `10 ~ 18` 分钟随机抖动窗口内刷新短期 `access_token`；仅当未绑定 `oauthClientKey` 或遇到 `unauthorized_client`/`invalid_client` 时切换 Personal / Enterprise（GCP）客户端；已绑定账号遇到 `invalid_grant` 时仅对原绑定客户端做一次瞬态重试，确认失效后标记 `invalidGrant: true` 返回 `401`。
 - **上游端点与项目发现**：
@@ -137,6 +141,7 @@ npm run antigravity:status
 npm run antigravity:sync-ua -- [--remote | --local-only | --proxy http://127.0.0.1:7890]
 npm run antigravity:sync-protocol -- [--binary <path>] [--write] [--force]
 npm run antigravity:oauth -- --client-id <ID> --client-secret <SECRET>
+npm run antigravity:oauth-login -- [--type personal|enterprise] [--proxy http://127.0.0.1:7890] [--no-browser] [--code <url_or_code>]
 npm run antigravity:login -- --file exported-accounts.json
 npm run antigravity:models
 npm run antigravity:quota

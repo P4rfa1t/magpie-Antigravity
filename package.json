@@ -65,6 +65,7 @@
     "backend:start:argon": "node scripts/backend-argon.mjs start",
     "antigravity:status": "node scripts/antigravity.mjs status",
     "antigravity:oauth": "node scripts/antigravity.mjs oauth",
+    "antigravity:oauth-login": "node scripts/antigravity.mjs oauth-login",
     "antigravity:login": "node scripts/antigravity.mjs login",
     "antigravity:quota": "node scripts/antigravity.mjs quota",
     "antigravity:models": "node scripts/antigravity.mjs models",

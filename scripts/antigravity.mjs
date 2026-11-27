@@ -1,14 +1,25 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import readline from 'node:readline';
+import { spawn } from 'node:child_process';
 import {
+  DEFAULT_MANUAL_OAUTH_PORT,
+  OAUTH_CALLBACK_PATH,
   antigravityDataDir,
+  buildOAuthAuthorizeUrl,
+  createPkcePair,
   loadAntigravityAccounts,
   loadOAuthClients,
+  normalizeClientType,
+  parseOAuthCallbackInput,
   parseRefreshTokenPackage,
   removeAntigravityAccount,
+  resolveOAuthClientForType,
   saveAntigravityAccount,
   saveOAuthClientCredentials,
+  startOAuthCallbackServer,
+  verifyAuthorizationCode,
   verifyRefreshToken
 } from '../lib/antigravity-oauth.mjs';
 import {
@@ -35,6 +46,8 @@ Commands:
                                             Sync paired Hub version/CL from official download, remote manifest, or local install
   oauth --client-id <id> --client-secret <secret> [--type personal|enterprise]
                                             Save OAuth client credentials
+  oauth-login [--type personal|enterprise] [--proxy http://...] [--client-id <id> --client-secret <secret>] [--port <port>] [--no-browser] [--code <callback_url_or_code>]
+                                            Sign in via Google OAuth browser authorization (auto loopback + manual fallback)
   login <refresh_token_or_json> [--type personal|enterprise] [--proxy http://...] [--file <path>] [--client-id <id> --client-secret <secret>]
                                             Verify and import Refresh Token(s)
   remove <email>                            Remove a saved account
@@ -63,10 +76,45 @@ function parseArgs(argv) {
     else if (a === '--local-only') flags.localOnly = true;
     else if (a === '--remote') flags.remote = true;
     else if (a === '--with-oauth-ua') flags.withOAuthUa = true;
+    else if (a === '--port') flags.port = args[++i];
+    else if (a.startsWith('--port=')) flags.port = a.slice('--port='.length);
+    else if (a === '--no-browser') flags.noBrowser = true;
+    else if (a === '--code') flags.code = args[++i];
+    else if (a.startsWith('--code=')) flags.code = a.slice('--code='.length);
     else if (a === '--help' || a === '-h') flags.help = true;
     else positional.push(a);
   }
   return { command, flags, positional };
+}
+
+function openBrowserUrl(url) {
+  try {
+    let cmd;
+    let args;
+    let env = process.env;
+    if (process.platform === 'darwin') {
+      cmd = 'open';
+      args = [url];
+    } else if (process.platform === 'win32') {
+      cmd = 'powershell';
+      args = ['-NoProfile', '-NonInteractive', '-Command', 'Start-Process -FilePath $env:AGY_OAUTH_URL'];
+      env = { ...process.env, AGY_OAUTH_URL: url };
+    } else {
+      cmd = 'xdg-open';
+      args = [url];
+    }
+    const child = spawn(cmd, args, {
+      env,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    child.on?.('error', () => {});
+    child.unref?.();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readStdinText() {
@@ -210,6 +258,112 @@ async function main() {
       dataDir
     });
     console.log(`Saved OAuth client [${saved.key}] to ${dataDir}`);
+    return;
+  }
+
+  if (command === 'oauth-login' || command === 'auth') {
+    const clientType = normalizeClientType(flags.type);
+    const customClientId = typeof flags.clientId === 'string' ? flags.clientId.trim() : '';
+    const customClientSecret = typeof flags.clientSecret === 'string' ? flags.clientSecret.trim() : '';
+    if ((customClientId && !customClientSecret) || (!customClientId && customClientSecret)) {
+      console.error('Both --client-id and --client-secret must be provided together.');
+      process.exitCode = 1;
+      return;
+    }
+    const clientCfg = resolveOAuthClientForType({
+      dataDir,
+      clientType,
+      ...(customClientId && customClientSecret ? { customClientId, customClientSecret } : {})
+    });
+    if (!clientCfg) {
+      console.error(
+        `No OAuth client configured for ${clientType}. Run: npm run antigravity:oauth -- --client-id <id> --client-secret <secret> --type ${clientType}`
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    const parsedPort = flags.port !== undefined ? Number(flags.port) : 0;
+    if (flags.port !== undefined && (!Number.isInteger(parsedPort) || parsedPort < 0 || parsedPort > 65535)) {
+      console.error(`Invalid --port: ${flags.port}`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const pkce = createPkcePair();
+    if (flags.code) {
+      const parsed = parseOAuthCallbackInput(flags.code, { expectedState: pkce.state });
+      const redirectUri = parsed.redirectUri || `http://localhost:${parsedPort || DEFAULT_MANUAL_OAUTH_PORT}${OAUTH_CALLBACK_PATH}`;
+      const acc = await verifyAuthorizationCode({
+        code: parsed.code,
+        redirectUri,
+        codeVerifier: pkce.codeVerifier,
+        clientType,
+        customClientId: clientCfg.clientId,
+        customClientSecret: clientCfg.clientSecret,
+        proxy: opts.proxy || undefined,
+        dataDir
+      });
+      saveAntigravityAccount(acc, dataDir);
+      if (customClientId && customClientSecret) {
+        saveOAuthClientCredentials({ clientType, clientId: customClientId, clientSecret: customClientSecret, dataDir });
+      }
+      console.log(`Authorized ${acc.email} (${acc.tier}, project=${acc.projectId}, models=${acc.modelsCount})`);
+      return;
+    }
+
+    const server = await startOAuthCallbackServer({ port: parsedPort, state: pkce.state });
+    const authUrl = buildOAuthAuthorizeUrl({
+      clientId: clientCfg.clientId,
+      redirectUri: server.redirectUri,
+      state: pkce.state,
+      codeChallenge: pkce.codeChallenge
+    });
+    console.log('Open this Google OAuth authorization URL in your browser:');
+    console.log(authUrl);
+    if (!flags.noBrowser) {
+      openBrowserUrl(authUrl);
+    }
+    console.log(`Listening for callback on ${server.redirectUri}`);
+
+    let rl = null;
+    try {
+      const candidates = [server.waitForCode()];
+      if (process.stdin.isTTY) {
+        console.log('Waiting for browser callback (or paste the callback URL / Authorization Code here and press Enter):');
+        rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        candidates.push(new Promise((resolve, reject) => {
+          rl.on('line', line => {
+            const trimmed = String(line || '').trim();
+            if (!trimmed) return;
+            try {
+              resolve(parseOAuthCallbackInput(trimmed, { expectedState: pkce.state }));
+            } catch (err) {
+              reject(err);
+            }
+          });
+        }));
+      }
+      const result = await Promise.race(candidates);
+      const acc = await verifyAuthorizationCode({
+        code: result.code,
+        redirectUri: server.redirectUri,
+        codeVerifier: pkce.codeVerifier,
+        clientType,
+        customClientId: clientCfg.clientId,
+        customClientSecret: clientCfg.clientSecret,
+        proxy: opts.proxy || undefined,
+        dataDir
+      });
+      saveAntigravityAccount(acc, dataDir);
+      if (customClientId && customClientSecret) {
+        saveOAuthClientCredentials({ clientType, clientId: customClientId, clientSecret: customClientSecret, dataDir });
+      }
+      console.log(`Authorized ${acc.email} (${acc.tier}, project=${acc.projectId}, models=${acc.modelsCount})`);
+    } finally {
+      rl?.close();
+      await server.close();
+    }
     return;
   }
 

@@ -22,7 +22,7 @@
 | **思考档位** | `minimal` / `low` / `medium` / `high` / `xhigh` / `max`（按模型变体自动折叠与映射） | `low`（普通）/ `medium`（`-thinking-medium`，仅 `gemini-4-argon`）/ `high`（`-thinking` 扩展思考） |
 | **图片输入** | 默认开启，支持多模态对话与 PDF `inlineData` | 默认开启，对话模型可以读图（需登录态 Cookie） |
 | **图片生成** | `gemini-3.1-flash-image`（OpenAI 与 Gemini Native 双入口） | 不支持 |
-| **登录方式** | **粘贴 Google OAuth Refresh Token**（支持单个 `1//...`、JSON 数组、任意文本批量提取） | 在无痕窗口登录 `gemini.google.com` 并复制 `cookie` |
+| **登录方式** | **Google OAuth 浏览器授权**（自动回环回调 / 手动粘贴回调链接）与 **Refresh Token 导入**（单个 / JSON 批量） | 在无痕窗口登录 `gemini.google.com` 并复制 `cookie` |
 | **额度卡片** | 同步 **5 小时** 与 **每周** 配额（Gemini / Claude & GPT / Argon，仅展示不锁死路由） | 同步网页版 **5 小时** 与 **每周** 用量及重置时间 |
 | **本地依赖** | **无需下载本地二进制**（纯 Node/Bun 直连 `v1internal`，支持 ALPN `h2` 代理复用） | `gemini-web2api-go`（Go 本地守护进程，支持官方上游版或自建优化版） |
 
@@ -45,18 +45,17 @@ magpie plugin add ./magpie-gemini-web
 
 ### 方式一：Antigravity (RT) (`antigravity-rt` — 推荐主力)
 
-1. 在 Magpie 的 **「来自插件」** 区域找到 **Antigravity (RT)**（使用独立 ID，不与 Magpie 内置订阅 `Antigravity` 冲突），选择 **「通过 Refresh Token 登录（支持批量）」**。
-2. 选择账号类型：**个人账号 (Personal)**（常规 Gmail 账号）或 **企业 / GCP (Vertex AI)**，按需填写代理地址（也可通过 `ANTIGRAVITY_PROXY` 或插件选项 `antigravity.proxy` 设置）。
+1. 在 Magpie 的 **「来自插件」** 区域找到 **Antigravity (RT)**（使用独立 ID，不与 Magpie 内置订阅 `Antigravity` 冲突），任选以下登录方式：
+   - **「通过 Google OAuth 浏览器授权登录（推荐）」**：自动拉起本地 `http://localhost:<端口>/oauth-callback` 监听，在浏览器登录 Google 并点击允许授权后自动换取 Refresh Token 并保存账号；
+   - **「通过 Google OAuth 授权（手动粘贴回调链接 / Code）」**（容器或远程环境会自动置顶）：在任意本地浏览器完成 Google 授权后，将地址栏跳转后的完整回调链接（或其中的 `code`）粘贴回 Magpie 提交；
+   - **「通过 Refresh Token 登录（支持批量）」**：直接粘贴单个 `1//03...`、JSON 数组 `[{"refresh_token":"1//03..."}, ...]` 或任意含 Token 文本（兼容 Antigravity Tools / Antigravity-Manager 导出格式）。
+2. 选择账号类型：**个人账号 (Personal)**（常规 Gmail 账号）或 **企业 / GCP (Vertex AI)**，按需填写代理地址（浏览器 OAuth 页面直连 Google；换取 Token 与后续请求走你配置的代理，也可通过 `ANTIGRAVITY_PROXY` 或插件选项 `antigravity.proxy` 设置）。
 3. **提供匹配的 Google OAuth 客户端凭据**（仓库内零硬编码 `client_id` / `client_secret`），任选以下一种方式即可：
-   - 在首次登录交互提示中直接填写（验证通过后自动保存到 `~/.local/share/magpie-antigravity/oauth-clients.json`，后续免填）；
+   - 在首次登录交互提示中直接填写（验证通过后按账号类型自动保存到 `~/.local/share/magpie-antigravity/oauth-clients.json`，后续免填）；
    - 设置环境变量 `ANTIGRAVITY_OAUTH_CLIENT_ID` / `ANTIGRAVITY_OAUTH_CLIENT_SECRET`（企业版可选 `ANTIGRAVITY_GCP_CLIENT_ID` / `ANTIGRAVITY_GCP_CLIENT_SECRET`，或使用 `ANTIGRAVITY_OAUTH_CLIENTS="antigravity_enterprise|id|secret"`）；
    - 运行命令行预置：`npm run antigravity:oauth -- --client-id <id> --client-secret <secret>`；
-   - 或在粘贴导入 JSON 时附带 `client_id` 与 `client_secret` 字段。
-4. 粘贴 Refresh Token（与 Antigravity Tools / Antigravity-Manager 兼容），支持：
-   - 单个 Token：`1//03...`
-   - JSON 数组：`[{"refresh_token":"1//03..."}, ...]`
-   - 包含 `1//...` Token 的任意文本（自动提取并去重）
-5. 插件会自动换取短期 `access_token`、通过 `:loadCodeAssist` / `:onboardUser` 开通或绑定 `cloudaicompanionProject`、校验可用模型并将账号加密级权限保存至本机 `~/.local/share/magpie-antigravity/accounts.json`（可通过 `ANTIGRAVITY_DATA_DIR` 修改）。
+   - 或在 Refresh Token 方式粘贴 JSON 时附带 `client_id` 与 `client_secret` 字段。
+4. 插件会自动换取短期 `access_token`、通过 `:loadCodeAssist` / `:onboardUser` 开通或绑定 `cloudaicompanionProject`、校验可用模型并将账号以 `0o700`/`0o600` 权限保存至本机 `~/.local/share/magpie-antigravity/accounts.json`（可通过 `ANTIGRAVITY_DATA_DIR` 修改）。
 
 #### 核心特性与稳定性机制
 
@@ -69,6 +68,7 @@ magpie plugin add ./magpie-gemini-web
 ```bash
 npm run antigravity:status                                     # 查看数据目录、有效 Egress/OAuth UA、缓存与已保存账号
 npm run antigravity:oauth -- --client-id <ID> --client-secret <SECRET>
+npm run antigravity:oauth-login -- --proxy http://127.0.0.1:7890 # 打开浏览器完成 Google OAuth 授权（支持 --no-browser / --code）
 npm run antigravity:login -- "1//03..." --proxy http://127.0.0.1:7890
 npm run antigravity:models                                     # 查看聚合后的模型与思考变体列表
 npm run antigravity:quota                                      # 查看实时 5h / 每周配额桶与模型余量
