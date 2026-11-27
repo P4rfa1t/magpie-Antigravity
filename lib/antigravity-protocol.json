@@ -1,6 +1,6 @@
 {
-  "version": "2.35.2",
-  "cl": "1029311855",
+  "version": "2.36.0",
+  "cl": "1031268331",
   "oauthUserAgent": "vscode/1.107.0 (Antigravity/2.8.0)",
   "apiVersion": "v1internal",
   "observedEndpoints": [
@@ -21,7 +21,7 @@
       "Content-Type",
       "Accept-Encoding"
     ],
-    "userAgentTemplate": "antigravity/cli/2.35.2 (aidev_client; os_type=<os>; arch=<arch>; cl=1029311855)",
+    "userAgentTemplate": "antigravity/cli/2.36.0 (aidev_client; os_type=<os>; arch=<arch>; cl=1031268331)",
     "contentType": "application/json",
     "acceptEncoding": "gzip"
   },
@@ -67,6 +67,7 @@
       "request_id",
       "root_cascade_id",
       "trajectory_id",
+      "trajectory_source",
       "used_claude",
       "used_claude_conservative",
       "used_non_gemini_model"
@@ -89,6 +90,7 @@
       "/v1internal:battleModeOverrides",
       "/v1internal:checkUrlAntivirus",
       "/v1internal:checkUrlDenylist",
+      "/v1internal:claimBankedQuotaReset",
       "/v1internal:completeCode",
       "/v1internal:connectInstance",
       "/v1internal:countTokens",
@@ -113,6 +115,7 @@
       "/v1internal:listModelConfigs",
       "/v1internal:listRemoteRepositories",
       "/v1internal:loadCodeAssist",
+      "/v1internal:marketplacesis",
       "/v1internal:migrateDatabaseCode",
       "/v1internal:notifyUser",
       "/v1internal:onboardUser",
@@ -169,5 +172,5 @@
     "hasStreamQueryAltSse": true
   },
   "source": "official-sync",
-  "updatedAt": 1795789364854
+  "updatedAt": 1795805495044
 }

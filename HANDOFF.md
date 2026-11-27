@@ -77,7 +77,7 @@ npm run interrogate -- --run                                 # 执行护栏 + �
 ### 3.3 防封伪装、成对 UA 与零凭据协议自动同步
 
 1. **成对 UA 解析与防 Franken-UA 不变量 (`lib/antigravity-ua.mjs`, `lib/antigravity-ua.json`)**：
-   - 解析优先级：成对环境变量（必须同时设置 `ANTIGRAVITY_HUB_VERSION` 与 `ANTIGRAVITY_HUB_CL`）> `${dataDir}/hub-version.json` 原子缓存（`0o700`/`0o600`）> 远端清单热同步（默认拉取 `P4rfa1t/magpie-Antigravity` 的 `lib/antigravity-ua.json`）> 内置基线（当前清单：`2.35.2` / `cl=1029311855` / `oauthUserAgent="vscode/1.107.0 (Antigravity/2.8.0)"`，源码常数兜底 `2.35.1` / `1029194470`）。
+   - 解析优先级：成对环境变量（必须同时设置 `ANTIGRAVITY_HUB_VERSION` 与 `ANTIGRAVITY_HUB_CL`）> `${dataDir}/hub-version.json` 原子缓存（`0o700`/`0o600`）> 远端清单热同步（默认拉取 `P4rfa1t/magpie-Antigravity` 的 `lib/antigravity-ua.json`）> 内置基线（当前清单：`2.36.0` / `cl=1031268331` / `oauthUserAgent="vscode/1.107.0 (Antigravity/2.8.0)"`，源码常数兜底 `2.35.1` / `1029194470`）。
    - `syncHubVersionFromOfficial` 采用**单遍流式 tar 解析**同时提取 Hub `(version, cl)`、`oauthUserAgent` 并缓存 `language_server` 二进制供后续协议探测复用（无需二次下载归档）。
 2. **零凭据线协议自动同步与漂移告警 (`scripts/sync-antigravity-protocol.mjs`, `lib/antigravity-protocol.json`, `.github/workflows/antigravity-ua-sync.yml`)**：
    - 使用本地 mock HTTPS/HTTP 服务器驱动官方 `language_server` 启动探针（零 Google 凭据），提取真实请求头顺序、Envelope 拓扑、身份行及二进制静态信号（有序 `observedEndpoints` / `binarySignals.endpoints` / `oauthScopes`）。

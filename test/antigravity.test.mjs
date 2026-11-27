@@ -499,6 +499,7 @@ describe('Antigravity OpenAI <-> v1internal mapping', () => {
     assert.equal(envelope.request.labels.cascade_id, envelope.requestId.split('/')[1]);
     assert.equal(envelope.request.labels.root_cascade_id, envelope.requestId.split('/')[1]);
     assert.equal(envelope.request.labels.trajectory_id, envelope.requestId.split('/')[3]);
+    assert.equal(envelope.request.labels.trajectory_source, 'CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT');
     assert.deepEqual(Object.keys(envelope.request.labels), [
       'cascade_id',
       'last_step_index',
@@ -506,6 +507,7 @@ describe('Antigravity OpenAI <-> v1internal mapping', () => {
       'request_id',
       'root_cascade_id',
       'trajectory_id',
+      'trajectory_source',
       'used_claude',
       'used_claude_conservative',
       'used_non_gemini_model'
