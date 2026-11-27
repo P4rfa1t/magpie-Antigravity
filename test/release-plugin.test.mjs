@@ -21,9 +21,9 @@ function makeTempPkg(t, version = '0.14.1') {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const pkgPath = path.join(dir, 'package.json');
   fs.writeFileSync(pkgPath, JSON.stringify({
-    name: 'magpie-gemini-web',
+    name: 'magpie-antigravity',
     version,
-    repository: { type: 'git', url: 'git+https://github.com/P4rfa1t/magpie-gemini-web.git' }
+    repository: { type: 'git', url: 'git+https://github.com/P4rfa1t/magpie-Antigravity.git' }
   }));
   return { dir, pkgPath };
 }
@@ -38,12 +38,12 @@ function makeReleaseFixture({
 } = {}) {
   const calls = [];
   const pkgJson = JSON.stringify({
-    name: 'magpie-gemini-web',
+    name: 'magpie-antigravity',
     version,
-    repository: { type: 'git', url: 'git+https://github.com/P4rfa1t/magpie-gemini-web.git' }
+    repository: { type: 'git', url: 'git+https://github.com/P4rfa1t/magpie-Antigravity.git' }
   });
   const backendReleaseJson = JSON.stringify({
-    repository: 'P4rfa1t/magpie-gemini-web',
+    repository: 'P4rfa1t/magpie-Antigravity',
     tag: 'backend-v4.28.0-magpie.1',
     binaries: {
       'darwin-arm64': { asset: 'gemini-web2api-go_darwin_arm64', sha256: 'a'.repeat(64) },
@@ -74,7 +74,7 @@ function makeReleaseFixture({
           isDraft: true,
           targetCommitish: commit,
           assets: [],
-          url: `https://github.com/P4rfa1t/magpie-gemini-web/releases/tag/v${version}`
+          url: `https://github.com/P4rfa1t/magpie-Antigravity/releases/tag/v${version}`
         };
         return { status: 0, stdout: `${releaseState.url}\n`, stderr: '' };
       }
@@ -86,7 +86,7 @@ function makeReleaseFixture({
         if (args[2] === 'publish-package.yml') {
           runSeq.publish += 1;
           if (releaseState) {
-            releaseState.assets.push({ name: `magpie-gemini-web-${version}.tgz`, state: 'uploaded' });
+            releaseState.assets.push({ name: `magpie-antigravity-${version}.tgz`, state: 'uploaded' });
           }
         } else if (args[2] === 'verify-package.yml') {
           runSeq.verify += 1;
@@ -105,7 +105,7 @@ function makeReleaseFixture({
             createdAt: new Date(1000000).toISOString(),
             status: 'completed',
             conclusion: 'success',
-            url: `https://github.com/P4rfa1t/magpie-gemini-web/actions/runs/${id}`
+            url: `https://github.com/P4rfa1t/magpie-Antigravity/actions/runs/${id}`
           }] : []),
           stderr: ''
         };
@@ -122,7 +122,7 @@ function makeReleaseFixture({
     if (str.includes('/releases/download/')) {
       return new Response(init.method === 'HEAD' ? null : 'ok', { status: 200 });
     }
-    if (str.endsWith(`/magpie-gemini-web/${version}`)) {
+    if (str.endsWith(`/magpie-antigravity/${version}`)) {
       return new Response(npmStatus === 200 ? '{}' : 'Not Found', { status: npmStatus });
     }
     throw new Error(`Unexpected fetch URL: ${str}`);
@@ -140,7 +140,7 @@ describe('verifyPublishedPackage', () => {
 
     const result = await verifyPublishedPackage({
       pkgPath,
-      repository: 'P4rfa1t/magpie-gemini-web',
+      repository: 'P4rfa1t/magpie-Antigravity',
       outDir,
       attempts: 5,
       retryMs: 0,
@@ -148,19 +148,19 @@ describe('verifyPublishedPackage', () => {
       log: () => {},
       fetchFn: async url => {
         const s = String(url);
-        if (s === 'https://registry.npmjs.org/magpie-gemini-web/0.14.1') {
+        if (s === 'https://registry.npmjs.org/magpie-antigravity/0.14.1') {
           return Response.json({
-            name: 'magpie-gemini-web',
+            name: 'magpie-antigravity',
             version: '0.14.1',
             dist: {
-              tarball: 'https://registry.npmjs.org/magpie-gemini-web/-/magpie-gemini-web-0.14.1.tgz',
+              tarball: 'https://registry.npmjs.org/magpie-antigravity/-/magpie-antigravity-0.14.1.tgz',
               shasum: sha1Hex(tarballBytes),
               integrity: sha512Integrity(tarballBytes)
             }
           });
         }
         if (s.endsWith('.tgz')) return new Response(tarballBytes, { status: 200 });
-        if (s === 'https://registry.npmjs.org/magpie-gemini-web') {
+        if (s === 'https://registry.npmjs.org/magpie-antigravity') {
           packumentReads += 1;
           const latest = packumentReads < 3 ? '0.14.0' : '0.14.1';
           return Response.json({ 'dist-tags': { latest } });
@@ -181,7 +181,7 @@ describe('verifyPublishedPackage', () => {
 
     await assert.rejects(verifyPublishedPackage({
       pkgPath,
-      repository: 'P4rfa1t/magpie-gemini-web',
+      repository: 'P4rfa1t/magpie-Antigravity',
       outDir: path.join(dir, 'out'),
       attempts: 3,
       retryMs: 0,
@@ -191,10 +191,10 @@ describe('verifyPublishedPackage', () => {
         const s = String(url);
         if (s.endsWith('/0.14.1')) {
           return Response.json({
-            name: 'magpie-gemini-web',
+            name: 'magpie-antigravity',
             version: '0.14.1',
             dist: {
-              tarball: 'https://registry.npmjs.org/magpie-gemini-web/-/magpie-gemini-web-0.14.1.tgz',
+              tarball: 'https://registry.npmjs.org/magpie-antigravity/-/magpie-antigravity-0.14.1.tgz',
               shasum: sha1Hex(tarballBytes),
               integrity: sha512Integrity(tarballBytes)
             }
@@ -213,7 +213,7 @@ describe('verifyPublishedPackage', () => {
 
     await assert.rejects(verifyPublishedPackage({
       pkgPath,
-      repository: 'P4rfa1t/magpie-gemini-web',
+      repository: 'P4rfa1t/magpie-Antigravity',
       outDir: path.join(dir, 'out'),
       attempts: 2,
       retryMs: 0,
@@ -223,16 +223,16 @@ describe('verifyPublishedPackage', () => {
         const s = String(url);
         if (s.endsWith('/0.14.1')) {
           return Response.json({
-            name: 'magpie-gemini-web',
+            name: 'magpie-antigravity',
             version: '0.14.1',
             dist: {
-              tarball: 'https://registry.npmjs.org/magpie-gemini-web/-/magpie-gemini-web-0.14.1.tgz',
+              tarball: 'https://registry.npmjs.org/magpie-antigravity/-/magpie-antigravity-0.14.1.tgz',
               shasum: sha1Hex(npmBytes),
               integrity: sha512Integrity(npmBytes)
             }
           });
         }
-        if (s.includes('registry.npmjs.org/magpie-gemini-web/-')) return new Response(npmBytes, { status: 200 });
+        if (s.includes('registry.npmjs.org/magpie-antigravity/-')) return new Response(npmBytes, { status: 200 });
         return new Response(ghBytes, { status: 200 });
       }
     }), /must match byte for byte/);
@@ -244,7 +244,7 @@ describe('verifyPublishedPackage', () => {
 
     await assert.rejects(verifyPublishedPackage({
       pkgPath,
-      repository: 'P4rfa1t/magpie-gemini-web',
+      repository: 'P4rfa1t/magpie-Antigravity',
       outDir: path.join(dir, 'out'),
       attempts: 3,
       retryMs: 0,
@@ -252,7 +252,7 @@ describe('verifyPublishedPackage', () => {
       log: () => {},
       fetchFn: async () => {
         reads += 1;
-        return Response.json({ name: 'magpie-gemini-web', version: '0.14.1', dist: {} });
+        return Response.json({ name: 'magpie-antigravity', version: '0.14.1', dist: {} });
       }
     }), /missing dist\.tarball/);
     assert.equal(reads, 1);
@@ -304,8 +304,8 @@ describe('releasePlugin orchestrator', () => {
 
     assert.equal(res.ok, true);
     assert.equal(res.tag, 'v0.14.1');
-    assert.equal(res.publishRunUrl, 'https://github.com/P4rfa1t/magpie-gemini-web/actions/runs/1001');
-    assert.equal(res.verifyRunUrl, 'https://github.com/P4rfa1t/magpie-gemini-web/actions/runs/2002');
+    assert.equal(res.publishRunUrl, 'https://github.com/P4rfa1t/magpie-Antigravity/actions/runs/1001');
+    assert.equal(res.verifyRunUrl, 'https://github.com/P4rfa1t/magpie-Antigravity/actions/runs/2002');
     assert.deepEqual(res.steps.map(s => [s.action, s.status]), [
       ['create-draft-release', 'completed'],
       ['publish-package', 'completed'],
@@ -321,8 +321,8 @@ describe('releasePlugin orchestrator', () => {
       existingRelease: {
         isDraft: true,
         targetCommitish: SHA_HEAD,
-        assets: [{ name: 'magpie-gemini-web-0.14.1.tgz', state: 'uploaded' }],
-        url: 'https://github.com/P4rfa1t/magpie-gemini-web/releases/tag/v0.14.1'
+        assets: [{ name: 'magpie-antigravity-0.14.1.tgz', state: 'uploaded' }],
+        url: 'https://github.com/P4rfa1t/magpie-Antigravity/releases/tag/v0.14.1'
       }
     });
 
@@ -344,7 +344,7 @@ describe('releasePlugin orchestrator', () => {
     ]);
     const dispatched = fixture.calls.filter(c => c[0] === 'gh' && c[1] === 'workflow' && c[2] === 'run');
     assert.deepEqual(dispatched, [
-      ['gh', 'workflow', 'run', 'verify-package.yml', '--repo', 'P4rfa1t/magpie-gemini-web', '-f', 'ref=v0.14.1']
+      ['gh', 'workflow', 'run', 'verify-package.yml', '--repo', 'P4rfa1t/magpie-Antigravity', '-f', 'ref=v0.14.1']
     ]);
   });
 
@@ -360,8 +360,8 @@ describe('releasePlugin orchestrator', () => {
       log: () => {}
     });
     assert.equal(res.ok, true);
-    assert.equal(res.publishRunUrl, 'https://github.com/P4rfa1t/magpie-gemini-web/actions/runs/1001');
-    assert.equal(res.verifyRunUrl, 'https://github.com/P4rfa1t/magpie-gemini-web/actions/runs/2002');
+    assert.equal(res.publishRunUrl, 'https://github.com/P4rfa1t/magpie-Antigravity/actions/runs/1001');
+    assert.equal(res.verifyRunUrl, 'https://github.com/P4rfa1t/magpie-Antigravity/actions/runs/2002');
   });
 
   it('aborts before triggering workflows when existing release points to a different commit SHA', async () => {
@@ -370,7 +370,7 @@ describe('releasePlugin orchestrator', () => {
         isDraft: true,
         targetCommitish: '0'.repeat(40),
         assets: [],
-        url: 'https://github.com/P4rfa1t/magpie-gemini-web/releases/tag/v0.14.1'
+        url: 'https://github.com/P4rfa1t/magpie-Antigravity/releases/tag/v0.14.1'
       }
     });
 

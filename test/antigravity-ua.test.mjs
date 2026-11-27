@@ -540,11 +540,11 @@ describe('scripts/antigravity.mjs CLI integration', () => {
 });
 
 describe('Remote manifest sync (Option B) & version convergence', () => {
-  it('points default manifest URL to P4rfa1t/magpie-gemini-web and loads valid paired manifest baseline', () => {
+  it('points default manifest URL to P4rfa1t/magpie-Antigravity and loads valid paired manifest baseline', () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'lib', 'antigravity-ua.json'), 'utf8'));
     assert.equal(
       DEFAULT_UA_MANIFEST_URL,
-      'https://raw.githubusercontent.com/P4rfa1t/magpie-gemini-web/main/lib/antigravity-ua.json'
+      'https://raw.githubusercontent.com/P4rfa1t/magpie-Antigravity/main/lib/antigravity-ua.json'
     );
     assert.match(manifest.version, /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/);
     assert.match(manifest.cl, /^\d{6,}$/);

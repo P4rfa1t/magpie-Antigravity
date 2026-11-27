@@ -685,7 +685,7 @@ export function checkGuardrails({ rootDir = REPO_ROOT } = {}) {
           file: rel,
           line,
           message: `Disallowed external or bare specifier "${specifier}".`,
-          fix: "Use explicit 'node:<builtin>' specifiers for Node built-ins and keep magpie-gemini-web zero-dependency."
+          fix: "Use explicit 'node:<builtin>' specifiers for Node built-ins and keep magpie-antigravity zero-dependency."
         });
       }
     }

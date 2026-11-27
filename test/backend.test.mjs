@@ -650,7 +650,7 @@ describe('11-21. Forwarding, security stripping, tool/image validation, and stre
     assert.equal(resDisabled.status, 400);
     assert.equal(fetched, false);
     const jsonErr = await resDisabled.json();
-    assert.match(jsonErr.error.message, /Tool calls are turned off.*magpie plugin options magpie-gemini-web '\{"allowTools":true\}'/);
+    assert.match(jsonErr.error.message, /Tool calls are turned off.*magpie plugin options magpie-antigravity '\{"allowTools":true\}'/);
 
     // allowTools: true -> passes
     const optsEnabled = settings({ baseURL, allowTools: true });
@@ -697,7 +697,7 @@ describe('11-21. Forwarding, security stripping, tool/image validation, and stre
     assert.equal(resDisabled.status, 400);
     assert.equal(fetched, false);
     const jsonErr = await resDisabled.json();
-    assert.match(jsonErr.error.message, /Image input is turned off.*magpie plugin options magpie-gemini-web '\{"allowImages":true\}'/);
+    assert.match(jsonErr.error.message, /Image input is turned off.*magpie plugin options magpie-antigravity '\{"allowImages":true\}'/);
 
     // allowImages: true -> passes with valid image_url
     const optsEnabled = settings({ baseURL, allowImages: true });

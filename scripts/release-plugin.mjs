@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 
 function printHelp() {
-  console.log(`Idempotent plugin release orchestrator for magpie-gemini-web.
+  console.log(`Idempotent plugin release orchestrator for magpie-Antigravity.
 
 Usage:
   node scripts/release-plugin.mjs [options]

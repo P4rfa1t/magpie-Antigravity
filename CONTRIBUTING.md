@@ -1,12 +1,12 @@
 # 贡献与反馈指南
 
-感谢使用和改进 `magpie-gemini-web`（独立维护仓库：[P4rfa1t/magpie-gemini-web](https://github.com/P4rfa1t/magpie-gemini-web)）。清晰的反馈能显著缩短定位时间，中文或英文均可。
+感谢使用和改进 `magpie-Antigravity`（npm 包名 `magpie-antigravity`，独立维护仓库：[P4rfa1t/magpie-Antigravity](https://github.com/P4rfa1t/magpie-Antigravity)）。清晰的反馈能显著缩短定位时间，中文或英文均可。
 
 > **请首先明确问题属于哪个 Provider：Antigravity (RT)（`antigravity-rt`）还是 Gemini Web（`gemini-web`）。**两者底层协议、鉴权方式与工具调用机制完全不同，请不要只写“Gemini 报错”。
 
 ## 提交 Issue 前
 
-1. **搜索已有 Issue**：先检索 [P4rfa1t/magpie-gemini-web/issues](https://github.com/P4rfa1t/magpie-gemini-web/issues)；若涉及 `gemini-web2api-go` 自身行为，也可对照上游 [zexadev/gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go/issues)。
+1. **搜索已有 Issue**：先检索 [P4rfa1t/magpie-Antigravity/issues](https://github.com/P4rfa1t/magpie-Antigravity/issues)；若涉及 `gemini-web2api-go` 自身行为，也可对照上游 [zexadev/gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go/issues)。
 2. **更新至最新版本**：先执行 `git pull` / 刷新 Magpie 插件并重新运行 `npm run check && npm test` 确认复现。
 3. **缩小复现范围**：尽量使用新会话与最小提示词，测试更换模型或关闭某项可选开关（如 `compactPrompt`、`signatureRectifier`）后的差异。
 4. **严格脱敏**：提交日志或截图前务必完成[脱敏要求](#脱敏要求)。

@@ -1,12 +1,12 @@
-# <img src="docs/logo.svg" width="28" height="28" align="top" alt="" /> magpie-gemini-web
+# <img src="docs/logo.svg" width="28" height="28" align="top" alt="" /> magpie-Antigravity
 
-[![Test Suite](https://github.com/P4rfa1t/magpie-gemini-web/actions/workflows/test.yml/badge.svg)](https://github.com/P4rfa1t/magpie-gemini-web/actions/workflows/test.yml) [![UA & Protocol Sync](https://github.com/P4rfa1t/magpie-gemini-web/actions/workflows/antigravity-ua-sync.yml/badge.svg)](https://github.com/P4rfa1t/magpie-gemini-web/actions/workflows/antigravity-ua-sync.yml) [![Magpie Plugin](https://img.shields.io/badge/Magpie-Plugin-3b82f6?style=flat-square)](https://usemagpie.ai/) [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22-8b5cf6?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-6366f1?style=flat-square)](https://github.com/P4rfa1t/magpie-gemini-web) [![License: MIT](https://img.shields.io/badge/license-MIT-10b981?style=flat-square)](LICENSE)
+[![Test Suite](https://github.com/P4rfa1t/magpie-Antigravity/actions/workflows/test.yml/badge.svg)](https://github.com/P4rfa1t/magpie-Antigravity/actions/workflows/test.yml) [![UA & Protocol Sync](https://github.com/P4rfa1t/magpie-Antigravity/actions/workflows/antigravity-ua-sync.yml/badge.svg)](https://github.com/P4rfa1t/magpie-Antigravity/actions/workflows/antigravity-ua-sync.yml) [![Magpie Plugin](https://img.shields.io/badge/Magpie-Plugin-3b82f6?style=flat-square)](https://usemagpie.ai/) [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22-8b5cf6?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-6366f1?style=flat-square)](https://github.com/P4rfa1t/magpie-Antigravity) [![License: MIT](https://img.shields.io/badge/license-MIT-10b981?style=flat-square)](LICENSE)
 
 [中文](README.md) | English | [Contributing & Issue Guide](CONTRIBUTING.md) | [Technical Handoff](HANDOFF.md)
 
-A standalone, zero-dependency Google model provider plugin for [Magpie](https://usemagpie.ai/) and **OpenCode**. Centered on **Antigravity (RT)** (`antigravity-rt`) — direct Node/Bun access to Google Cloud Code `v1internal` using OAuth Refresh Tokens with **no local binary** and no extra CLI system-prompt overhead, delivering **Gemini 4**, **Claude 5.5**, **GPT-OSS**, native function calling, image generation, high-hit implicit prefix caching, and automated daily zero-credential UA/protocol synchronization — alongside **Gemini Web** (`gemini-web`) as an optional web-cookie channel.
+A standalone, zero-dependency Google model provider plugin for [Magpie](https://usemagpie.ai/) and **OpenCode** (npm package `magpie-antigravity`). Centered on **Antigravity (RT)** (`antigravity-rt`) — direct Node/Bun access to Google Cloud Code `v1internal` via Google OAuth browser authorization and Refresh Tokens with **no local binary** and no extra CLI system-prompt overhead, delivering **Gemini 4**, **Claude 5.5**, **GPT-OSS**, native function calling, image generation, high-hit implicit prefix caching, and automated daily zero-credential UA/protocol synchronization — alongside **Gemini Web** (`gemini-web`) as an optional web-cookie channel.
 
-> **Standalone Repository Notice:** `P4rfa1t/magpie-gemini-web` is now maintained as an independent repository (no longer a fork). The legacy AI Studio (`ai-studio`) module has been removed to focus cleanly on **Antigravity (RT)** reliability, protocol alignment, and **Gemini Web** support.
+> **Standalone Repository Notice:** `P4rfa1t/magpie-Antigravity` is now maintained as an independent repository (no longer a fork). The legacy AI Studio (`ai-studio`) module has been removed to focus cleanly on **Antigravity (RT)** reliability, protocol alignment, and **Gemini Web** support.
 
 ---
 
@@ -35,8 +35,8 @@ The plugin provides two independent providers that can be used individually or s
 Clone this repository locally and register it in Magpie (or add via Git URL):
 
 ```bash
-git clone https://github.com/P4rfa1t/magpie-gemini-web.git
-magpie plugin add ./magpie-gemini-web
+git clone https://github.com/P4rfa1t/magpie-Antigravity.git
+magpie plugin add ./magpie-Antigravity
 ```
 
 > Exported symbols: `GeminiWebPlugin` (default export) and `AntigravityPlugin` (named export). Zero runtime or dev npm dependencies; supports Node.js >= 22 and Magpie's built-in Bun runtime.
@@ -105,13 +105,13 @@ npm run antigravity:sync-protocol                              # Run zero-creden
 
 <br>
 
-Configure via `magpie plugin options magpie-gemini-web '{"antigravity":{...}}'` or environment variables:
+Configure via `magpie plugin options magpie-antigravity '{"antigravity":{...}}'` or environment variables:
 
 | Option (`antigravity.*`) | Environment Variable | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `proxy` | `ANTIGRAVITY_PROXY` | `""` | HTTP/HTTPS proxy for reaching Google (`http://host.docker.internal:<port>` in Docker) |
 | `dataDir` | `ANTIGRAVITY_DATA_DIR` | `~/.local/share/magpie-antigravity` | Local directory for `accounts.json`, `oauth-clients.json`, `signature-cache.json`, `hub-version.json` |
-| `uaManifestUrl` | `ANTIGRAVITY_UA_MANIFEST_URL` | `https://raw.githubusercontent.com/P4rfa1t/magpie-gemini-web/main/lib/antigravity-ua.json` | Remote paired UA manifest URL; set `off`/`false`/`0` to disable runtime sync |
+| `uaManifestUrl` | `ANTIGRAVITY_UA_MANIFEST_URL` | `https://raw.githubusercontent.com/P4rfa1t/magpie-Antigravity/main/lib/antigravity-ua.json` | Remote paired UA manifest URL; set `off`/`false`/`0` to disable runtime sync |
 | `detectLocal` | `ANTIGRAVITY_DETECT_LOCAL` | `false` | Set `true`/`1` to scan locally installed Antigravity binaries for paired UA |
 | `clientId` / `clientSecret` | `ANTIGRAVITY_OAUTH_CLIENT_ID` / `ANTIGRAVITY_OAUTH_CLIENT_SECRET` | — | Personal Google OAuth client credentials |
 | `gcpClientId` / `gcpClientSecret` | `ANTIGRAVITY_GCP_CLIENT_ID` / `ANTIGRAVITY_GCP_CLIENT_SECRET` | — | Enterprise / GCP OAuth client credentials |
@@ -185,11 +185,11 @@ MIT (see [LICENSE](LICENSE)). Upstream `gemini-web2api-go` is also MIT (see [LIC
 ## Star History
 
 <p align="center">
-  <a href="https://www.star-history.com/#P4rfa1t/magpie-gemini-web&amp;Date">
+  <a href="https://www.star-history.com/#P4rfa1t/magpie-Antigravity&amp;Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=P4rfa1t/magpie-gemini-web&amp;type=Date&amp;theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=P4rfa1t/magpie-gemini-web&amp;type=Date" />
-      <img alt="GitHub star history for magpie-gemini-web" src="https://api.star-history.com/svg?repos=P4rfa1t/magpie-gemini-web&amp;type=Date" width="800" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=P4rfa1t/magpie-Antigravity&amp;type=Date&amp;theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=P4rfa1t/magpie-Antigravity&amp;type=Date" />
+      <img alt="GitHub star history for magpie-Antigravity" src="https://api.star-history.com/svg?repos=P4rfa1t/magpie-Antigravity&amp;type=Date" width="800" />
     </picture>
   </a>
 </p>

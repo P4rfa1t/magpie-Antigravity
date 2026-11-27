@@ -132,28 +132,33 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
     fs.writeFileSync(path.join(magpieDir, 'plugins.json'), '{not-valid');
     assert.equal(isPluginInMagpie(magpieDir), null);
 
-    // Installed via npm spec
+    // Installed via npm spec or GitHub URL (including mixed-case magpie-Antigravity)
     fs.writeFileSync(path.join(magpieDir, 'plugins.json'), JSON.stringify({
-      plugins: [{ spec: 'magpie-gemini-web@0.9.0' }]
+      plugins: [{ spec: 'magpie-antigravity@0.9.0' }]
+    }));
+    assert.equal(isPluginInMagpie(magpieDir), true);
+
+    fs.writeFileSync(path.join(magpieDir, 'plugins.json'), JSON.stringify({
+      plugins: [{ spec: 'https://github.com/P4rfa1t/magpie-Antigravity.git' }]
     }));
     assert.equal(isPluginInMagpie(magpieDir), true);
 
     // Disabled via UI toggle ("off": true) -> still true!
     fs.writeFileSync(path.join(magpieDir, 'plugins.json'), JSON.stringify({
-      plugins: [{ spec: 'magpie-gemini-web', off: true }]
+      plugins: [{ spec: 'magpie-antigravity', off: true }]
     }));
     assert.equal(isPluginInMagpie(magpieDir), true);
 
     // Stale path entry pointing to a non-existent folder -> false!
     fs.writeFileSync(path.join(magpieDir, 'plugins.json'), JSON.stringify({
-      plugins: [{ spec: path.join(tmpRoot, 'deleted-checkout-magpie-gemini-web'), off: true }]
+      plugins: [{ spec: path.join(tmpRoot, 'deleted-checkout-magpie-antigravity'), off: true }]
     }));
     assert.equal(isPluginInMagpie(magpieDir, { pluginRoot: path.join(tmpRoot, 'other-root') }), false);
 
-    // Valid local path entry with package.json name === "magpie-gemini-web" -> true!
+    // Valid local path entry with package.json name === "magpie-antigravity" -> true!
     const validLocalDir = path.join(tmpRoot, 'local-checkout');
     fs.mkdirSync(validLocalDir, { recursive: true });
-    fs.writeFileSync(path.join(validLocalDir, 'package.json'), JSON.stringify({ name: 'magpie-gemini-web' }));
+    fs.writeFileSync(path.join(validLocalDir, 'package.json'), JSON.stringify({ name: 'magpie-antigravity' }));
     fs.writeFileSync(path.join(magpieDir, 'plugins.json'), JSON.stringify({
       plugins: [{ spec: validLocalDir }]
     }));
@@ -173,7 +178,7 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
 
     fs.mkdirSync(magpieDir, { recursive: true });
     fs.writeFileSync(path.join(magpieDir, 'plugins.json'), JSON.stringify({
-      plugins: [{ spec: 'magpie-gemini-web' }]
+      plugins: [{ spec: 'magpie-antigravity' }]
     }));
 
     // Populate Web downloaded assets + db
@@ -195,7 +200,7 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
     try {
       // Step 1: User toggles plugin OFF in Magpie ("off": true) -> assets must NOT be deleted
       fs.writeFileSync(path.join(magpieDir, 'plugins.json'), JSON.stringify({
-        plugins: [{ spec: 'magpie-gemini-web', off: true }]
+        plugins: [{ spec: 'magpie-antigravity', off: true }]
       }));
       await sleep(300);
       assert.equal(hasBackendAssets(webDir), true, 'disabling plugin must not delete Web assets');
@@ -251,7 +256,7 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
 
     fs.mkdirSync(magpieDir, { recursive: true });
     fs.writeFileSync(path.join(magpieDir, 'plugins.json'), JSON.stringify({
-      plugins: [{ spec: 'magpie-gemini-web' }]
+      plugins: [{ spec: 'magpie-antigravity' }]
     }));
 
     const seedAssets = async () => {
@@ -290,7 +295,7 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
 
       // Reinstall plugin in plugins.json and re-create assets
       fs.writeFileSync(path.join(magpieDir, 'plugins.json'), JSON.stringify({
-        plugins: [{ spec: 'magpie-gemini-web' }]
+        plugins: [{ spec: 'magpie-antigravity' }]
       }));
       await seedAssets();
       const rewatched = handle.ensureWatcher();

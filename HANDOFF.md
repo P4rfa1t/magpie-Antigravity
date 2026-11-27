@@ -1,4 +1,4 @@
-# Project Handoff & Technical Analysis (`magpie-gemini-web`)
+# Project Handoff & Technical Analysis (`magpie-Antigravity`)
 
 > 本文档面向后续接手本项目的 AI 模型与开发者，完整汇总独立化后仓库架构、工程红线、`Antigravity (RT)` 直连供应商协议与防封伪装机制、隐式缓存诊断、全量配置参考、`Gemini Web` 共享基础设施，以及已验证结论与待办边界。
 
@@ -6,7 +6,7 @@
 
 ## 1. 独立项目概览与双 Provider 架构
 
-`magpie-gemini-web`（当前版本 `0.17.0`）现为 `P4rfa1t/magpie-gemini-web` 独立维护仓库，面向 **Magpie** 与 **OpenCode** 提供零外部 npm 依赖的 Google 模型接入能力（仅使用 `node:*` 内置模块，兼容 `Node >= 22` 与 Magpie 内置 `Bun` 运行时；`bun:sqlite` 仅在 `lib/usage.mjs` 按 `globalThis.Bun` 条件加载）。
+`magpie-Antigravity`（npm 包名 `magpie-antigravity`，当前版本 `0.17.0`）现为 `P4rfa1t/magpie-Antigravity` 独立维护仓库，面向 **Magpie** 与 **OpenCode** 提供零外部 npm 依赖的 Google 模型接入能力（仅使用 `node:*` 内置模块，兼容 `Node >= 22` 与 Magpie 内置 `Bun` 运行时；`bun:sqlite` 仅在 `lib/usage.mjs` 按 `globalThis.Bun` 条件加载）。
 
 > **独立化变更说明**：仓库已移除原 AI Studio (`ai-studio` / `AIStudio2API`) 相关代码、补丁、脚本与测试，并将共享进程身份校验函数（`verifyProcessIdentity`、`processPids`、`listenerPids`）迁移至 `lib/proc.mjs`。当前以 **Antigravity (RT)** 为核心主力，同时保留 **Gemini Web** 作为网页版 Cookie 补充通道。
 
@@ -77,7 +77,7 @@ npm run interrogate -- --run                                 # 执行护栏 + �
 ### 3.3 防封伪装、成对 UA 与零凭据协议自动同步
 
 1. **成对 UA 解析与防 Franken-UA 不变量 (`lib/antigravity-ua.mjs`, `lib/antigravity-ua.json`)**：
-   - 解析优先级：成对环境变量（必须同时设置 `ANTIGRAVITY_HUB_VERSION` 与 `ANTIGRAVITY_HUB_CL`）> `${dataDir}/hub-version.json` 原子缓存（`0o700`/`0o600`）> 远端清单热同步（默认拉取 `P4rfa1t/magpie-gemini-web` 的 `lib/antigravity-ua.json`）> 内置基线（当前清单：`2.35.2` / `cl=1029311855` / `oauthUserAgent="vscode/1.107.0 (Antigravity/2.8.0)"`，源码常数兜底 `2.35.1` / `1029194470`）。
+   - 解析优先级：成对环境变量（必须同时设置 `ANTIGRAVITY_HUB_VERSION` 与 `ANTIGRAVITY_HUB_CL`）> `${dataDir}/hub-version.json` 原子缓存（`0o700`/`0o600`）> 远端清单热同步（默认拉取 `P4rfa1t/magpie-Antigravity` 的 `lib/antigravity-ua.json`）> 内置基线（当前清单：`2.35.2` / `cl=1029311855` / `oauthUserAgent="vscode/1.107.0 (Antigravity/2.8.0)"`，源码常数兜底 `2.35.1` / `1029194470`）。
    - `syncHubVersionFromOfficial` 采用**单遍流式 tar 解析**同时提取 Hub `(version, cl)`、`oauthUserAgent` 并缓存 `language_server` 二进制供后续协议探测复用（无需二次下载归档）。
 2. **零凭据线协议自动同步与漂移告警 (`scripts/sync-antigravity-protocol.mjs`, `lib/antigravity-protocol.json`, `.github/workflows/antigravity-ua-sync.yml`)**：
    - 使用本地 mock HTTPS/HTTP 服务器驱动官方 `language_server` 启动探针（零 Google 凭据），提取真实请求头顺序、Envelope 拓扑、身份行及二进制静态信号（有序 `observedEndpoints` / `binarySignals.endpoints` / `oauthScopes`）。
@@ -112,7 +112,7 @@ npm run interrogate -- --run                                 # 执行护栏 + �
 | :--- | :--- | :--- | :--- |
 | `proxy` | `ANTIGRAVITY_PROXY` | `""` | HTTP/HTTPS 代理 URL |
 | `dataDir` | `ANTIGRAVITY_DATA_DIR` | `~/.local/share/magpie-antigravity` | 本机状态与缓存目录 |
-| `uaManifestUrl` | `ANTIGRAVITY_UA_MANIFEST_URL` | `https://raw.githubusercontent.com/P4rfa1t/magpie-gemini-web/main/lib/antigravity-ua.json` | 远端 UA 清单地址（`off`/`false`/`0` 关闭） |
+| `uaManifestUrl` | `ANTIGRAVITY_UA_MANIFEST_URL` | `https://raw.githubusercontent.com/P4rfa1t/magpie-Antigravity/main/lib/antigravity-ua.json` | 远端 UA 清单地址（`off`/`false`/`0` 关闭） |
 | `detectLocal` | `ANTIGRAVITY_DETECT_LOCAL` | `false` | 设 `1`/`true` 扫描本机 Antigravity 客户端 |
 | `clientId` / `clientSecret` | `ANTIGRAVITY_OAUTH_CLIENT_ID` / `ANTIGRAVITY_OAUTH_CLIENT_SECRET` | — | Personal OAuth 客户端凭据 |
 | `gcpClientId` / `gcpClientSecret` | `ANTIGRAVITY_GCP_CLIENT_ID` / `ANTIGRAVITY_GCP_CLIENT_SECRET` | — | Enterprise / GCP 客户端凭据 |
@@ -172,5 +172,5 @@ npm run antigravity:smoke -- --model gemini-3.8-flash-low
 - **待跟进工程项**：
   1. **CI Runner 与 Action 升级**：持续观察 `macos-15-intel` 队列排队情况，适时将 `.github/workflows/*.yml` 中的 `actions/checkout@v4` / `actions/setup-node@v4` 升级至 Node 24 运行时版本。
   2. **可选 `checkpoint` 标题生成请求**：官方部分 cascade 会附带 `requestType: "checkpoint"` 轻量请求，当前未模拟，可视后续风控观测决定是否引入。
-  3. **Gemini Web 优化版二进制发布**：独立仓库下如需默认下载 `4.31.0-magpie.2`（`lib/backend-release.json` 已指向 `P4rfa1t/magpie-gemini-web`），需触发 `.github/workflows/backend.yml` 与 `publish-backend.yml` 上传对应 tag 二进制，否则用户需使用 `npm run backend:install:upstream` 或 `npm run backend:build:argon`。
+  3. **Gemini Web 优化版二进制发布**：独立仓库下如需默认下载 `4.31.0-magpie.2`（`lib/backend-release.json` 已指向 `P4rfa1t/magpie-Antigravity`），需触发 `.github/workflows/backend.yml` 与 `publish-backend.yml` 上传对应 tag 二进制，否则用户需使用 `npm run backend:install:upstream` 或 `npm run backend:build:argon`。
   4. **上游 WAF 规则与 `503 MODEL_CAPACITY_EXHAUSTED` 抓包**：持续对照社区 Cloak 规则同步新增特征词，并补充真实 `503` 现场样本单测。

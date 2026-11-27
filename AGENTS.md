@@ -1,4 +1,4 @@
-# Repository Agent Guide (`magpie-gemini-web`)
+# Repository Agent Guide (`magpie-Antigravity`)
 
 Keep this file compact and link-checked: every path reference is validated by `scripts/check-guardrails.mjs` (`npm run check`).
 

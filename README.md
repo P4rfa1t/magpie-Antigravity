@@ -1,12 +1,12 @@
-# <img src="docs/logo.svg" width="28" height="28" align="top" alt="" /> magpie-gemini-web
+# <img src="docs/logo.svg" width="28" height="28" align="top" alt="" /> magpie-Antigravity
 
-[![Test Suite](https://github.com/P4rfa1t/magpie-gemini-web/actions/workflows/test.yml/badge.svg)](https://github.com/P4rfa1t/magpie-gemini-web/actions/workflows/test.yml) [![UA & Protocol Sync](https://github.com/P4rfa1t/magpie-gemini-web/actions/workflows/antigravity-ua-sync.yml/badge.svg)](https://github.com/P4rfa1t/magpie-gemini-web/actions/workflows/antigravity-ua-sync.yml) [![Magpie Plugin](https://img.shields.io/badge/Magpie-Plugin-3b82f6?style=flat-square)](https://usemagpie.ai/) [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22-8b5cf6?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-6366f1?style=flat-square)](https://github.com/P4rfa1t/magpie-gemini-web) [![License: MIT](https://img.shields.io/badge/license-MIT-10b981?style=flat-square)](LICENSE)
+[![Test Suite](https://github.com/P4rfa1t/magpie-Antigravity/actions/workflows/test.yml/badge.svg)](https://github.com/P4rfa1t/magpie-Antigravity/actions/workflows/test.yml) [![UA & Protocol Sync](https://github.com/P4rfa1t/magpie-Antigravity/actions/workflows/antigravity-ua-sync.yml/badge.svg)](https://github.com/P4rfa1t/magpie-Antigravity/actions/workflows/antigravity-ua-sync.yml) [![Magpie Plugin](https://img.shields.io/badge/Magpie-Plugin-3b82f6?style=flat-square)](https://usemagpie.ai/) [![Node.js >= 22](https://img.shields.io/badge/node-%3E%3D22-8b5cf6?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-6366f1?style=flat-square)](https://github.com/P4rfa1t/magpie-Antigravity) [![License: MIT](https://img.shields.io/badge/license-MIT-10b981?style=flat-square)](LICENSE)
 
 中文 | [English](README.en.md) | [贡献与反馈指南](CONTRIBUTING.md) | [技术架构与交接文档](HANDOFF.md)
 
-面向 [Magpie](https://usemagpie.ai/) 与 **OpenCode** 的独立、零外部依赖 Google 模型插件。以 **Antigravity (RT)**（`antigravity-rt`）为核心——纯 JS 通过 Google OAuth Refresh Token 直连 Cloud Code `v1internal` 接口，免本地二进制与 `agy` CLI 额外系统提示词开销，开箱提供 **Gemini 4**、**Claude 5.5**、**GPT-OSS**、原生工具调用、图像生成、高命中率隐式前缀缓存与每日零凭据官方协议/UA 自动同步；同时保留 **Gemini Web**（`gemini-web`）作为网页版 Cookie 补充通道。
+面向 [Magpie](https://usemagpie.ai/) 与 **OpenCode** 的独立、零外部依赖 Google 模型插件（npm 包名 `magpie-antigravity`）。以 **Antigravity (RT)**（`antigravity-rt`）为核心——纯 JS 通过 Google OAuth 浏览器授权与 Refresh Token 直连 Cloud Code `v1internal` 接口，免本地二进制与 `agy` CLI 额外系统提示词开销，开箱提供 **Gemini 4**、**Claude 5.5**、**GPT-OSS**、原生工具调用、图像生成、高命中率隐式前缀缓存与每日零凭据官方协议/UA 自动同步；同时保留 **Gemini Web**（`gemini-web`）作为网页版 Cookie 补充通道。
 
-> **独立仓库说明**：本项目已由 `P4rfa1t/magpie-gemini-web` 作为独立项目维护（不再作为分支运行），并已移除原 AI Studio (`ai-studio`) 模块，全面聚焦 **Antigravity (RT)** 直连稳定性、协议一致性与 **Gemini Web** 兼容支持。
+> **独立仓库说明**：本项目已由 `P4rfa1t/magpie-Antigravity` 作为独立项目维护（不再作为分支运行），并已移除原 AI Studio (`ai-studio`) 模块，全面聚焦 **Antigravity (RT)** 直连稳定性、协议一致性与 **Gemini Web** 兼容支持。
 
 ---
 
@@ -35,8 +35,8 @@
 将本仓库克隆到本地后，在 Magpie 中从本地目录添加插件（或直接通过 Git 仓库地址添加）：
 
 ```bash
-git clone https://github.com/P4rfa1t/magpie-gemini-web.git
-magpie plugin add ./magpie-gemini-web
+git clone https://github.com/P4rfa1t/magpie-Antigravity.git
+magpie plugin add ./magpie-Antigravity
 ```
 
 > 也可直接使用导出入口：`GeminiWebPlugin`（默认导出）与 `AntigravityPlugin`（命名导出）。插件保持 **零运行时 npm 依赖**，支持 Node.js >= 22 与 Magpie 内置 Bun 运行时。
@@ -105,13 +105,13 @@ npm run antigravity:sync-protocol                              # 零凭据本地
 
 <br>
 
-可通过 `magpie plugin options magpie-gemini-web '{"antigravity":{...}}'` 或环境变量配置：
+可通过 `magpie plugin options magpie-antigravity '{"antigravity":{...}}'` 或环境变量配置：
 
 | 插件选项 (`antigravity.*`) | 对应环境变量 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `proxy` | `ANTIGRAVITY_PROXY` | `""` | 访问 Google 的 HTTP/HTTPS 代理（容器内用 `http://host.docker.internal:<port>`） |
 | `dataDir` | `ANTIGRAVITY_DATA_DIR` | `~/.local/share/magpie-antigravity` | 存储 `accounts.json`、`oauth-clients.json`、`signature-cache.json`、`hub-version.json` |
-| `uaManifestUrl` | `ANTIGRAVITY_UA_MANIFEST_URL` | `https://raw.githubusercontent.com/P4rfa1t/magpie-gemini-web/main/lib/antigravity-ua.json` | 远端成对 UA 清单地址；设为 `off`/`false`/`0` 关闭运行期热同步 |
+| `uaManifestUrl` | `ANTIGRAVITY_UA_MANIFEST_URL` | `https://raw.githubusercontent.com/P4rfa1t/magpie-Antigravity/main/lib/antigravity-ua.json` | 远端成对 UA 清单地址；设为 `off`/`false`/`0` 关闭运行期热同步 |
 | `detectLocal` | `ANTIGRAVITY_DETECT_LOCAL` | `false` | 设为 `true`/`1` 时在运行期扫描本机 Antigravity 客户端探测成对 UA |
 | `clientId` / `clientSecret` | `ANTIGRAVITY_OAUTH_CLIENT_ID` / `ANTIGRAVITY_OAUTH_CLIENT_SECRET` | — | Personal Google OAuth 客户端凭据 |
 | `gcpClientId` / `gcpClientSecret` | `ANTIGRAVITY_GCP_CLIENT_ID` / `ANTIGRAVITY_GCP_CLIENT_SECRET` | — | Enterprise / GCP OAuth 客户端凭据 |
@@ -189,11 +189,11 @@ MIT（见 [LICENSE](LICENSE)）。上游 `gemini-web2api-go` 同为 MIT（见 [L
 ## Star 趋势
 
 <p align="center">
-  <a href="https://www.star-history.com/#P4rfa1t/magpie-gemini-web&amp;Date">
+  <a href="https://www.star-history.com/#P4rfa1t/magpie-Antigravity&amp;Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=P4rfa1t/magpie-gemini-web&amp;type=Date&amp;theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=P4rfa1t/magpie-gemini-web&amp;type=Date" />
-      <img alt="magpie-gemini-web 的 GitHub Star 增长趋势" src="https://api.star-history.com/svg?repos=P4rfa1t/magpie-gemini-web&amp;type=Date" width="800" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=P4rfa1t/magpie-Antigravity&amp;type=Date&amp;theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=P4rfa1t/magpie-Antigravity&amp;type=Date" />
+      <img alt="magpie-Antigravity 的 GitHub Star 增长趋势" src="https://api.star-history.com/svg?repos=P4rfa1t/magpie-Antigravity&amp;type=Date" width="800" />
     </picture>
   </a>
 </p>
