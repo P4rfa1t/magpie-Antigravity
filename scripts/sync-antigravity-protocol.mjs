@@ -40,6 +40,22 @@ function classifyRequestIdFormat(id) {
   return s ? s.split('/')[0] : 'unknown';
 }
 
+function extractSystemIdentityLine(systemInstruction) {
+  const parts = Array.isArray(systemInstruction?.parts) ? systemInstruction.parts : [];
+  for (const part of parts) {
+    if (typeof part?.text !== 'string' || !part.text.trim()) continue;
+    const lines = part.text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const idIdx = lines.findIndex(l => /^<identity>$/i.test(l));
+    if (idIdx !== -1 && lines[idIdx + 1]) {
+      return lines[idIdx + 1];
+    }
+    const youAre = lines.find(l => /^You are\b/i.test(l));
+    if (youAre) return youAre;
+    if (lines[0]) return lines[0];
+  }
+  return '';
+}
+
 function parseTarOctalOrBase256(buf, start, end) {
   if ((buf[start] & 0x80) !== 0) {
     let val = 0;
@@ -121,7 +137,8 @@ export function summarizeCapturedExchanges(exchanges, staticSignals = {}, meta =
     thinkingConfigKeys: new Set(),
     toolsPacking: null,
     userAgentField: null,
-    sessionIdFormat: null
+    sessionIdFormat: null,
+    systemIdentityLine: null
   };
   let loadCodeAssistMetadata = null;
   let listExperimentsMetadata = null;
@@ -180,6 +197,10 @@ export function summarizeCapturedExchanges(exchanges, staticSignals = {}, meta =
           if (parsed.requestType === 'agent' && streamMeta.agentRequestKeys.length === 0) {
             streamMeta.agentRequestKeys = Object.keys(reqObj);
           }
+          if (parsed.requestType === 'agent' && !streamMeta.systemIdentityLine && reqObj.systemInstruction) {
+            const identityLine = extractSystemIdentityLine(reqObj.systemInstruction);
+            if (identityLine) streamMeta.systemIdentityLine = identityLine;
+          }
           if (!streamMeta.sessionIdFormat && typeof reqObj.sessionId === 'string') {
             streamMeta.sessionIdFormat = /^-?\d+$/.test(reqObj.sessionId) ? 'signed_int64_string' : 'string';
           }
@@ -234,7 +255,8 @@ export function summarizeCapturedExchanges(exchanges, staticSignals = {}, meta =
       generationConfigKeys: [...streamMeta.generationConfigKeys].sort(),
       thinkingConfigKeys: [...streamMeta.thinkingConfigKeys].sort(),
       userAgentField: streamMeta.userAgentField || 'antigravity',
-      sessionIdFormat: streamMeta.sessionIdFormat || 'signed_int64_string'
+      sessionIdFormat: streamMeta.sessionIdFormat || 'signed_int64_string',
+      ...(streamMeta.systemIdentityLine ? { systemIdentityLine: streamMeta.systemIdentityLine } : {})
     },
     binarySignals: {
       endpoints: staticSignals.endpoints || [],

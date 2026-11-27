@@ -2402,6 +2402,53 @@ describe('AntigravityPlugin integration with Magpie contract', () => {
       protocol.streamGenerateContent.thinkingConfigKeys
     );
     assert.deepEqual(Object.keys(parityEnv.request), protocol.streamGenerateContent.agentRequestKeys);
+    assert.equal(OFFICIAL_ANTIGRAVITY_IDENTITY, protocol.streamGenerateContent.systemIdentityLine);
+
+    let capturedLoadMeta = null;
+    let capturedStreamHeaderKeys = null;
+    const parityDir = makeTempDir();
+    const parityPlugin = await AntigravityPlugin({}, {
+      antigravity: { dataDir: parityDir, clientId: 'cid', clientSecret: 'csec' },
+      fetchFn: async (url, init = {}) => {
+        if (url.includes('/oauth2.googleapis.com/token')) {
+          return Response.json({ access_token: 'tok-parity', expires_in: 3600 });
+        }
+        if (url.includes('/userinfo')) {
+          return Response.json({ email: 'parity@gmail.com' });
+        }
+        if (url.includes(':loadCodeAssist')) {
+          capturedLoadMeta = JSON.parse(init.body)?.metadata || null;
+          return Response.json({ cloudaicompanionProject: 'p-parity', currentTier: { id: 'free-tier' } });
+        }
+        if (url.includes(':fetchAvailableModels')) {
+          return Response.json(SAMPLE_CATALOG);
+        }
+        if (url.includes(':streamGenerateContent')) {
+          capturedStreamHeaderKeys = Object.keys(init.headers || {});
+          return new Response(
+            'data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"totalTokenCount":6}}}\n\n',
+            { status: 200, headers: { 'Content-Type': 'text/event-stream' } }
+          );
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+    });
+    const parityFlow = await parityPlugin.auth.methods[0].authorize({ clientType: 'personal', proxy: '' });
+    const paritySignIn = await parityFlow.callback('1//03parity');
+    const parityLoader = await parityPlugin.auth.loader(async () => ({ type: 'api', key: paritySignIn.key, metadata: paritySignIn.metadata }));
+    const parityRes = await parityLoader.fetch(`${ANTIGRAVITY_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gemini-4-hydrogen', stream: true, messages: [{ role: 'user', content: 'hi' }] })
+    });
+    assert.equal(parityRes.status, 200);
+    await parityRes.text();
+    if (protocol.clientMetadata?.loadCodeAssist) {
+      assert.deepEqual(capturedLoadMeta, protocol.clientMetadata.loadCodeAssist);
+    }
+    const transportOnlyHeaders = new Set(['Host', 'Content-Length', 'Accept-Encoding']);
+    const expectedAppHeaderOrder = protocol.headers.rawHeaderOrder.filter(h => !transportOnlyHeaders.has(h));
+    assert.deepEqual(capturedStreamHeaderKeys, expectedAppHeaderOrder);
   });
 
   it('treats seconds-level Individual quota reached 429s as per-pool exhaustion instead of locking the account', async () => {

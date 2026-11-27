@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: sync-antigravity
@@ -37,6 +38,7 @@ jobs:
         name: Extract latest paired Antigravity Hub version and CL
         env:
           FORCE_SYNC: ${{ inputs.force == true && '1' || '0' }}
+          LS_BIN_PATH: ${{ runner.temp }}/language_server
         run: |
           node --input-type=module <<'JS'
           import fs from 'node:fs';
@@ -50,6 +52,7 @@ jobs:
           const extracted = await syncHubVersionFromOfficial({
             persist: false,
             syncIdeOAuthUa: true,
+            extractBinaryPath: process.env.LS_BIN_PATH,
             timeoutMs: 120000
           });
 
@@ -68,7 +71,10 @@ jobs:
 
           if (!force && samePair) {
             console.log(`No change: already at ${current.version} (cl=${current.cl}, oauth=${resolvedOAuth || 'default'})`);
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'changed=false\n');
+            fs.appendFileSync(
+              process.env.GITHUB_OUTPUT,
+              `changed=false\nversion=${extracted.version}\ncl=${extracted.cl}\n`
+            );
             process.exit(0);
           }
 
@@ -90,17 +96,42 @@ jobs:
         name: Probe official language_server wire protocol (zero-credential)
         env:
           FORCE_SYNC: ${{ inputs.force == true && '1' || '0' }}
+          LS_BIN_PATH: ${{ runner.temp }}/language_server
         run: |
-          if [ "$FORCE_SYNC" = "1" ]; then
-            node scripts/sync-antigravity-protocol.mjs --write --force
-          else
-            node scripts/sync-antigravity-protocol.mjs --write
+          BIN_ARGS=()
+          if [ -f "$LS_BIN_PATH" ]; then
+            BIN_ARGS+=(--binary "$LS_BIN_PATH")
           fi
-      - name: Verify guardrails and Antigravity tests before push
+          if [ "$FORCE_SYNC" = "1" ]; then
+            node scripts/sync-antigravity-protocol.mjs "${BIN_ARGS[@]}" --write --force
+          else
+            node scripts/sync-antigravity-protocol.mjs "${BIN_ARGS[@]}" --write
+          fi
+      - id: verify-before-push
+        name: Verify guardrails and Antigravity tests before push
         if: steps.sync-ua.outputs.changed == 'true' || steps.sync-protocol.outputs.changed == 'true'
         run: |
           npm run check
           node --test test/antigravity-ua.test.mjs test/antigravity.test.mjs test/guardrails.test.mjs
+      - name: Notify via GitHub issue when protocol drift breaks verification
+        if: failure() && steps.verify-before-push.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.sync-protocol.outputs.version || steps.sync-ua.outputs.version }}
+          CL: ${{ steps.sync-protocol.outputs.cl || steps.sync-ua.outputs.cl }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="[Antigravity Sync] Protocol drift detected (${VERSION:-unknown}, cl=${CL:-unknown})"
+          BODY="Daily zero-credential protocol sync detected upstream changes that failed verification against local mapper/protocol parity tests.\n\n- Version: \`${VERSION:-unknown}\`\n- CL: \`${CL:-unknown}\`\n- Workflow run: ${RUN_URL}"
+          EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"[Antigravity Sync] Protocol drift detected\"" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body "$(printf '%b' "$BODY")"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$(printf '%b' "$BODY")" || true
+          fi
+      - name: Clean up extracted language_server binary
+        if: always()
+        run: rm -f "${{ runner.temp }}/language_server"
       - name: Commit and push updated Antigravity manifests
         if: steps.sync-ua.outputs.changed == 'true' || steps.sync-protocol.outputs.changed == 'true'
         env:

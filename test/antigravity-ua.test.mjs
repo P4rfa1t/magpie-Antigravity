@@ -734,6 +734,11 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
     const parsedPage = parseOfficialDownloadPage(html);
     assert.equal(parsedPage?.idePreferredUrl, ideUrl);
 
+    const extractOutPath = path.join(makeTempDir('magpie-ide-bin-out-'), 'language_server');
+    const binaryPayload = Buffer.concat([
+      Buffer.from('noise\0antigravity/hub/2.39.0 (aidev_client; os_type=linux; arch=amd64; cl=1088000777)\0', 'utf8'),
+      Buffer.alloc(1024 * 1024, 0x41)
+    ]);
     const hubTarGz = buildTarGzArchive([
       {
         name: 'Antigravity/resources/app/package.json',
@@ -741,7 +746,7 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
       },
       {
         name: 'Antigravity/language_server_linux_x64',
-        content: Buffer.from('noise\0antigravity/hub/2.39.0 (aidev_client; os_type=linux; arch=amd64; cl=1088000777)\0', 'utf8')
+        content: binaryPayload
       }
     ]);
     const ideTarGz = buildTarGzArchive([
@@ -751,19 +756,27 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
       }
     ]);
 
+    let hubDownloadCount = 0;
     const synced = await syncHubVersionFromOfficial({
       dataDir: makeTempDir('magpie-ide-sync-data-'),
       syncIdeOAuthUa: true,
+      extractBinaryPath: extractOutPath,
       fetchFn: async url => {
         if (url === 'https://antigravity.google/download') return new Response(html, { status: 200 });
-        if (url === hubUrl) return new Response(hubTarGz, { status: 200 });
+        if (url === hubUrl) {
+          hubDownloadCount += 1;
+          return new Response(hubTarGz, { status: 200 });
+        }
         if (url === ideUrl) return new Response(ideTarGz, { status: 200 });
         throw new Error(`Unexpected URL: ${url}`);
       }
     });
+    assert.equal(hubDownloadCount, 1);
     assert.equal(synced.version, '2.39.0');
     assert.equal(synced.cl, '1088000777');
     assert.equal(synced.oauthUserAgent, 'vscode/1.102.0 (Antigravity/4.6.1)');
+    assert.equal(synced.binaryPath, extractOutPath);
+    assert.equal(fs.readFileSync(extractOutPath).length, binaryPayload.length);
   });
 
   it('extracts clean binary protocol signals, builds deterministic wire snapshots, and wires protocol sync into CI workflow', () => {
@@ -805,6 +818,9 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
           requestId: 'agent/11111111-1111-4111-8111-111111111111/1700000000000/22222222-2222-4222-8222-222222222222/1',
           request: {
             contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+            systemInstruction: {
+              parts: [{ text: '<identity>\nYou are Antigravity, test identity line.\nMore details.' }]
+            },
             tools: [{ functionDeclarations: [{ name: 'a' }, { name: 'b' }] }],
             labels: { cascade_id: 'c', last_step_index: '0', root_cascade_id: 'c', trajectory_id: 't' },
             generationConfig: { maxOutputTokens: 65536, thinkingConfig: { includeThoughts: true, thinkingLevel: 'HIGH' } },
@@ -820,6 +836,7 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
     assert.equal(snapshot.headers.acceptEncoding, 'gzip');
     assert.equal(snapshot.headers.userAgentTemplate, 'antigravity/cli/2.35.2 (aidev_client; os_type=<os>; arch=<arch>; cl=1029311855)');
     assert.equal(snapshot.streamGenerateContent.toolsPacking, 'single_function_declarations_wrapper');
+    assert.equal(snapshot.streamGenerateContent.systemIdentityLine, 'You are Antigravity, test identity line.');
     assert.deepEqual(snapshot.clientMetadata.loadCodeAssist, { ideType: 'ANTIGRAVITY' });
     assert.deepEqual(snapshot.observedEndpoints, [
       'POST /v1internal:loadCodeAssist',
@@ -848,10 +865,14 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
     assert.equal(protocolManifest.apiVersion, 'v1internal');
     assert.equal(protocolManifest.headers.acceptEncoding, 'gzip');
     assert.equal(protocolManifest.streamGenerateContent.toolsPacking, 'single_function_declarations_wrapper');
+    assert.ok(protocolManifest.streamGenerateContent.systemIdentityLine?.startsWith('You are Antigravity,'));
 
     const workflowText = fs.readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'antigravity-ua-sync.yml'), 'utf8');
     assert.equal(workflowText.includes('\r\n'), false);
     assert.match(workflowText, /syncHubVersionFromOfficial/);
+    assert.match(workflowText, /extractBinaryPath/);
     assert.match(workflowText, /scripts\/sync-antigravity-protocol\.mjs/);
+    assert.match(workflowText, /issues:\s*write/);
+    assert.match(workflowText, /\[Antigravity Sync\] Protocol drift detected/);
   });
 });

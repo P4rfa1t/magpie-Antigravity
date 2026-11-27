@@ -80,7 +80,8 @@
       "thinkingLevel"
     ],
     "userAgentField": "antigravity",
-    "sessionIdFormat": "signed_int64_string"
+    "sessionIdFormat": "signed_int64_string",
+    "systemIdentityLine": "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding."
   },
   "binarySignals": {
     "endpoints": [
@@ -168,5 +169,5 @@
     "hasStreamQueryAltSse": true
   },
   "source": "official-sync",
-  "updatedAt": 1795696618090
+  "updatedAt": 1795781823862
 }
