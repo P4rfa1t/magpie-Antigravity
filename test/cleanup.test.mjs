@@ -4,23 +4,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import {
-  cleanStudio,
-  hasStudioAssets,
-  ensureStudioConfig,
-  computeFileHash
-} from '../lib/studio-native.mjs';
-import { STUDIO_VERSION, PINNED_ARCHIVES } from './helpers/studio-legacy.mjs';
 import {
   cleanBackend,
   stopBackend,
   hasBackendAssets,
   localBackend,
-  localSetup,
-  pinnedBinary
+  localSetup
 } from '../lib/native.mjs';
 import {
   isPluginInMagpie,
@@ -28,7 +19,6 @@ import {
   registerMagpieCleanup,
   ensureDetachedWatcher
 } from '../lib/cleanup.mjs';
-import { GeminiWebPlugin } from '../index.mjs';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -41,10 +31,6 @@ async function freePort() {
   const port = server.address().port;
   await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
   return port;
-}
-
-async function configureStudio(dataDir) {
-  return ensureStudioConfig(dataDir, undefined, { port: await freePort() });
 }
 
 function processAlive(pid) {
@@ -86,89 +72,7 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  it('1. cleanStudio stops running service and Camoufox, removes downloaded assets, and preserves auth & config', async () => {
-    const dataDir = path.join(tmpRoot, 'studio-clean');
-    await configureStudio(dataDir);
-    fs.writeFileSync(path.join(dataDir, 'backend.log'), 'log line\n', { mode: 0o600 });
-    fs.writeFileSync(path.join(dataDir, 'backend.log.1'), 'old log\n', { mode: 0o600 });
-
-    // Create a saved Google account in auth/
-    const accDir = path.join(dataDir, 'auth', 'user@gmail.com');
-    fs.mkdirSync(accDir, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(path.join(accDir, 'storage-state.json'), '{"cookies":[{"name":"SAPISID","value":"v","domain":".google.com"}],"origins":[]}\n', { mode: 0o600 });
-
-    // Create package/, archive, manifest, launch record, and staging leftovers
-    const pkgDir = path.join(dataDir, 'package');
-    fs.mkdirSync(path.join(pkgDir, 'sub'), { recursive: true, mode: 0o700 });
-    const binName = process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api';
-    const binPath = path.join(pkgDir, binName);
-    fs.copyFileSync(process.execPath, binPath, fs.constants.COPYFILE_FICLONE);
-    fs.writeFileSync(path.join(pkgDir, 'sub', 'asset.txt'), 'asset', { mode: 0o400 });
-
-    const nodeLib = path.join(path.dirname(fs.realpathSync(process.execPath)), '..', 'lib');
-    const child = spawn(binPath, ['-e', 'process.send("ready"); setInterval(() => {}, 1000)'], {
-      env: { ...process.env, DYLD_LIBRARY_PATH: nodeLib, LD_LIBRARY_PATH: nodeLib },
-      stdio: ['ignore', 'ignore', 'ignore', 'ipc']
-    });
-    const childExited = new Promise(resolve => child.on('exit', resolve));
-    await new Promise((resolve, reject) => {
-      child.once('message', resolve);
-      child.once('error', reject);
-    });
-
-    // Harden package directory like protectPackage() does on Unix
-    if (process.platform !== 'win32') {
-      fs.chmodSync(path.join(pkgDir, 'sub'), 0o500);
-      fs.chmodSync(pkgDir, 0o555);
-    }
-
-    fs.writeFileSync(path.join(dataDir, 'backend.pid'), `${child.pid}\n`, { mode: 0o600 });
-    fs.writeFileSync(path.join(dataDir, 'backend.launch.json'), '{"pid":1,"proxy":null,"proxyEnv":"none"}\n', { mode: 0o600 });
-    fs.writeFileSync(path.join(dataDir, 'install-manifest.json'), `{"version":"${STUDIO_VERSION.slice(1)}"}\n`, { mode: 0o600 });
-    fs.writeFileSync(path.join(dataDir, 'aistudio2api-v0.2.19-magpie.1-darwin-arm64.tar.gz'), 'archive-bytes', { mode: 0o600 });
-    fs.mkdirSync(path.join(dataDir, '.install.tmp.abcd'), { recursive: true });
-    fs.mkdirSync(path.join(dataDir, '.package.stage.abcd'), { recursive: true });
-    fs.mkdirSync(path.join(dataDir, '.package.backup.abcd'), { recursive: true });
-
-    // Create Camoufox runtime files (~300 MB archive + unpacked browser)
-    const camoufoxDir = path.join(dataDir, 'runtime', 'camoufox', 'Camoufox.app', 'Contents', 'MacOS');
-    fs.mkdirSync(camoufoxDir, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(path.join(camoufoxDir, 'camoufox'), 'browser-bin', { mode: 0o755 });
-    fs.writeFileSync(path.join(dataDir, 'runtime', 'camoufox-152.0.4-beta.29-mac.arm64.zip.part'), 'part-bytes', { mode: 0o600 });
-    fs.mkdirSync(path.join(dataDir, 'runtime', '.camoufox-stage-1234'), { recursive: true });
-
-    assert.equal(hasStudioAssets(dataDir), true);
-
-    try {
-      const res = await cleanStudio({
-        dataDir,
-        fetchFn: async () => {
-          throw Object.assign(new Error('refused'), { code: 'ECONNREFUSED' });
-        }
-      });
-      assert.equal(res.cleaned, true);
-      await childExited;
-      assert.equal(processAlive(child.pid), false, 'running aistudio2api process must be stopped');
-    } finally {
-      try { process.kill(child.pid, 'SIGKILL'); } catch {}
-    }
-
-    assert.equal(hasStudioAssets(dataDir), false);
-    assert.equal(fs.existsSync(pkgDir), false, 'package/ must be removed');
-    assert.equal(fs.existsSync(path.join(dataDir, 'install-manifest.json')), false);
-    assert.equal(fs.existsSync(path.join(dataDir, 'backend.pid')), false);
-    assert.equal(fs.existsSync(path.join(dataDir, 'backend.launch.json')), false);
-    assert.equal(fs.existsSync(path.join(dataDir, 'aistudio2api-v0.2.19-magpie.1-darwin-arm64.tar.gz')), false);
-    assert.equal(fs.existsSync(path.join(dataDir, 'runtime')), false, 'empty runtime/ directory must be removed');
-
-    // Preserved files
-    assert.equal(fs.existsSync(path.join(dataDir, 'config.json')), true, 'config.json must be preserved');
-    assert.equal(fs.existsSync(path.join(dataDir, '.env')), true, '.env must be preserved');
-    assert.equal(fs.existsSync(path.join(accDir, 'storage-state.json')), true, 'auth account must be preserved');
-    assert.equal(fs.existsSync(path.join(dataDir, 'backend.log')), true, 'backend.log must be preserved');
-  });
-
-  it('2. cleanBackend stops running gemini-web2api-go, removes bin/, and preserves config, secrets & gemini.db', async () => {
+  it('1. cleanBackend stops running gemini-web2api-go, removes bin/, and preserves config, secrets & gemini.db', async () => {
     const dataDir = path.join(tmpRoot, 'web-clean');
     const binDir = path.join(dataDir, 'bin');
     fs.mkdirSync(binDir, { recursive: true, mode: 0o700 });
@@ -217,7 +121,7 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
     assert.equal(fs.existsSync(path.join(dataDir, 'gemini.db')), true, 'gemini.db must be preserved');
   });
 
-  it('3. isPluginInMagpie distinguishes installed, disabled ("off": true), stale paths, and removed states', () => {
+  it('2. isPluginInMagpie distinguishes installed, disabled ("off": true), stale paths, and removed states', () => {
     const magpieDir = path.join(tmpRoot, 'magpie-config');
     fs.mkdirSync(magpieDir, { recursive: true });
 
@@ -262,9 +166,8 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
     assert.equal(isPluginInMagpie(magpieDir), false);
   });
 
-  it('4. detached watcher automatically cleans both Studio and Web assets when plugin is disabled then removed in Magpie', async () => {
+  it('3. detached watcher automatically cleans Web assets when plugin is disabled then removed in Magpie', async () => {
     const magpieDir = path.join(tmpRoot, 'magpie-e2e');
-    const studioDir = path.join(tmpRoot, 'studio-e2e');
     const webDir = path.join(tmpRoot, 'web-e2e');
     const pidFile = path.join(tmpRoot, 'watcher.pid');
 
@@ -273,16 +176,6 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
       plugins: [{ spec: 'magpie-gemini-web' }]
     }));
 
-    await configureStudio(studioDir);
-    fs.mkdirSync(path.join(studioDir, 'package'), { recursive: true });
-    fs.writeFileSync(path.join(studioDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), 'bin');
-    if (process.platform !== 'win32') fs.chmodSync(path.join(studioDir, 'package'), 0o555);
-    fs.writeFileSync(path.join(studioDir, 'aistudio2api-v0.2.19-magpie.1-darwin-arm64.tar.gz'), 'archive');
-    fs.mkdirSync(path.join(studioDir, 'runtime', 'camoufox'), { recursive: true });
-    fs.writeFileSync(path.join(studioDir, 'runtime', 'camoufox', 'camoufox-bin'), 'browser');
-    fs.mkdirSync(path.join(studioDir, 'auth', 'keep@gmail.com'), { recursive: true });
-    fs.writeFileSync(path.join(studioDir, 'auth', 'keep@gmail.com', 'storage-state.json'), '{}');
-
     // Populate Web downloaded assets + db
     fs.mkdirSync(path.join(webDir, 'bin'), { recursive: true });
     fs.writeFileSync(path.join(webDir, 'bin', process.platform === 'win32' ? 'gemini-web2api-go.exe' : 'gemini-web2api-go'), 'web-bin');
@@ -290,10 +183,8 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
     fs.writeFileSync(path.join(webDir, 'secrets.json'), JSON.stringify({ apiKey: 'gw_1', adminToken: 'adm_1' }));
     fs.writeFileSync(path.join(webDir, 'gemini.db'), 'db-keep');
 
-    // Start the detached watcher with a fast poll interval (100ms)
     const watcher = ensureDetachedWatcher({
       magpieDir,
-      studioDir,
       webDir,
       pidFile,
       pollMs: 100,
@@ -307,7 +198,6 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
         plugins: [{ spec: 'magpie-gemini-web', off: true }]
       }));
       await sleep(300);
-      assert.equal(hasStudioAssets(studioDir), true, 'disabling plugin must not delete Studio assets');
       assert.equal(hasBackendAssets(webDir), true, 'disabling plugin must not delete Web assets');
 
       // Step 2: User deletes plugin in Magpie -> entry removed from plugins.json
@@ -316,14 +206,11 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
       }));
 
       const deadline = Date.now() + 30000;
-      while (Date.now() < deadline && (hasStudioAssets(studioDir) || hasBackendAssets(webDir))) {
+      while (Date.now() < deadline && hasBackendAssets(webDir)) {
         await sleep(100);
       }
 
-      assert.equal(hasStudioAssets(studioDir), false, 'Studio downloaded assets must be removed upon uninstall');
       assert.equal(hasBackendAssets(webDir), false, 'Web downloaded assets must be removed upon uninstall');
-      assert.equal(fs.existsSync(path.join(studioDir, 'auth', 'keep@gmail.com', 'storage-state.json')), true, 'Studio auth must be preserved');
-      assert.equal(fs.existsSync(path.join(studioDir, 'config.json')), true, 'Studio config.json must be preserved');
       assert.equal(fs.existsSync(path.join(webDir, 'gemini.db')), true, 'Web gemini.db must be preserved');
       assert.equal(fs.existsSync(path.join(webDir, 'secrets.json')), true, 'Web secrets.json must be preserved');
     } finally {
@@ -331,15 +218,8 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
     }
   });
 
-  it('5. CLI clean subcommands in scripts/studio.mjs and scripts/backend.mjs clean downloaded assets while keeping accounts', async () => {
-    const studioDir = path.join(tmpRoot, 'cli-studio');
+  it('4. CLI clean subcommand in scripts/backend.mjs cleans downloaded assets while keeping accounts', async () => {
     const webDir = path.join(tmpRoot, 'cli-web');
-
-    await configureStudio(studioDir);
-    fs.mkdirSync(path.join(studioDir, 'package'), { recursive: true });
-    fs.writeFileSync(path.join(studioDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), 'bin');
-    fs.mkdirSync(path.join(studioDir, 'runtime', 'camoufox'), { recursive: true });
-    fs.writeFileSync(path.join(studioDir, 'runtime', 'camoufox', 'camoufox-bin'), 'cam');
 
     fs.mkdirSync(path.join(webDir, 'bin'), { recursive: true });
     fs.writeFileSync(path.join(webDir, 'bin', process.platform === 'win32' ? 'gemini-web2api-go.exe' : 'gemini-web2api-go'), 'web');
@@ -355,20 +235,17 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
       proc.on('close', code => resolve({ code, out }));
     });
 
-    const studioRes = await runCli('scripts/studio.mjs', ['clean', '--data-dir', studioDir]);
-    assert.equal(studioRes.code, 0, studioRes.out);
-    assert.equal(hasStudioAssets(studioDir), false);
-    assert.equal(fs.existsSync(path.join(studioDir, 'config.json')), true);
-
     const webRes = await runCli('scripts/backend.mjs', ['clean', `--data-dir=${webDir}`]);
     assert.equal(webRes.code, 0, webRes.out);
     assert.equal(hasBackendAssets(webDir), false);
     assert.equal(fs.existsSync(path.join(webDir, 'config.json')), true);
+
+    const directRes = await cleanDownloadedAssets({ webDir });
+    assert.equal(directRes.web.cleaned, true);
   });
 
-  it('6. registerMagpieCleanup exposes handle.pid, resets after reinstall, and cleans again on 2nd removal', async () => {
+  it('5. registerMagpieCleanup exposes handle.pid, resets after reinstall, and cleans again on 2nd removal', async () => {
     const magpieDir = path.join(tmpRoot, 'magpie-reinstall');
-    const studioDir = path.join(tmpRoot, 'studio-reinstall');
     const webDir = path.join(tmpRoot, 'web-reinstall');
     const pidFile = path.join(tmpRoot, 'watcher-reinstall.pid');
 
@@ -378,9 +255,6 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
     }));
 
     const seedAssets = async () => {
-      await configureStudio(studioDir);
-      fs.mkdirSync(path.join(studioDir, 'package'), { recursive: true });
-      fs.writeFileSync(path.join(studioDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), 'bin');
       fs.mkdirSync(path.join(webDir, 'bin'), { recursive: true });
       fs.writeFileSync(path.join(webDir, 'bin', process.platform === 'win32' ? 'gemini-web2api-go.exe' : 'gemini-web2api-go'), 'web-bin');
       fs.writeFileSync(path.join(webDir, 'config.json'), JSON.stringify({ host: '127.0.0.1', port: await freePort() }));
@@ -389,7 +263,6 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
 
     await seedAssets();
     const handle = registerMagpieCleanup({ directory: magpieDir }, {
-      studioDir,
       webDir,
       pidFile,
       pollMs: 80,
@@ -404,10 +277,9 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
       handle.triggerIfRemoved();
 
       const deadline1 = Date.now() + 30000;
-      while (Date.now() < deadline1 && (hasStudioAssets(studioDir) || hasBackendAssets(webDir))) {
+      while (Date.now() < deadline1 && hasBackendAssets(webDir)) {
         await sleep(80);
       }
-      assert.equal(hasStudioAssets(studioDir), false, '1st removal must clean Studio assets');
       assert.equal(hasBackendAssets(webDir), false, '1st removal must clean Web assets');
 
       // Wait for 1st watcher to exit and clear pidFile
@@ -430,10 +302,9 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
       handle.triggerIfRemoved();
 
       const deadline2 = Date.now() + 30000;
-      while (Date.now() < deadline2 && (hasStudioAssets(studioDir) || hasBackendAssets(webDir))) {
+      while (Date.now() < deadline2 && hasBackendAssets(webDir)) {
         await sleep(80);
       }
-      assert.equal(hasStudioAssets(studioDir), false, '2nd removal must also clean Studio assets');
       assert.equal(hasBackendAssets(webDir), false, '2nd removal must also clean Web assets');
     } finally {
       handle.close();
@@ -441,10 +312,8 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
     }
   });
 
-  it('7. stale or reused PIDs are never signaled and do not keep the watcher alive as an orphan', async () => {
-    const studioDir = path.join(tmpRoot, 'stale-pid-studio');
+  it('6. stale or reused PIDs are never signaled and do not keep the watcher alive as an orphan', async () => {
     const webDir = path.join(tmpRoot, 'stale-pid-web');
-    fs.mkdirSync(studioDir, { recursive: true });
     fs.mkdirSync(webDir, { recursive: true });
 
     const unrelated = spawn(process.execPath, ['-e', 'process.send("ready"); setInterval(() => {}, 1000)'], {
@@ -457,67 +326,45 @@ describe('Automatic & Manual Cleanup of Downloaded Assets', () => {
     });
 
     try {
-      // Write unrelated process PID into backend.pid without matching binaries
-      fs.writeFileSync(path.join(studioDir, 'backend.pid'), `${unrelated.pid}\n`);
-      fs.writeFileSync(path.join(studioDir, 'backend.launch.json'), JSON.stringify({ pid: unrelated.pid, proxy: null, proxyEnv: 'none' }));
       fs.writeFileSync(path.join(webDir, 'backend.pid'), `${unrelated.pid}\n`);
 
-      // hasStudioAssets and hasBackendAssets must ignore and clean up stale/unverified backend.pid
-      assert.equal(hasStudioAssets(studioDir), false, 'unverified Studio backend.pid must not count as active asset');
+      // hasBackendAssets must ignore and clean up stale/unverified backend.pid
       assert.equal(hasBackendAssets(webDir), false, 'unverified Web backend.pid must not count as active asset');
-      assert.equal(fs.existsSync(path.join(studioDir, 'backend.pid')), false);
       assert.equal(fs.existsSync(path.join(webDir, 'backend.pid')), false);
 
-      // Even when binaries exist on disk at different paths, cleanStudio / cleanBackend must not kill unrelated PID
-      fs.mkdirSync(path.join(studioDir, 'package'), { recursive: true });
-      fs.writeFileSync(path.join(studioDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-      fs.writeFileSync(path.join(studioDir, 'backend.pid'), `${unrelated.pid}\n`);
-
+      // Even when binaries exist on disk, cleanBackend must not kill unrelated PID
       fs.mkdirSync(path.join(webDir, 'bin'), { recursive: true });
       fs.writeFileSync(path.join(webDir, 'bin', process.platform === 'win32' ? 'gemini-web2api-go.exe' : 'gemini-web2api-go'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
       fs.writeFileSync(path.join(webDir, 'backend.pid'), `${unrelated.pid}\n`);
 
-      await cleanStudio({ dataDir: studioDir });
       await cleanBackend({ dataDir: webDir });
 
-      assert.equal(processAlive(unrelated.pid), true, 'unrelated process must survive cleanStudio and cleanBackend');
+      assert.equal(processAlive(unrelated.pid), true, 'unrelated process must survive cleanBackend');
     } finally {
       try { unrelated.kill('SIGKILL'); } catch {}
       await exited;
     }
   });
 
-  it('8. cleanStudio and cleanBackend serialize with .setup.lock and stopBackend rejects foreign listeners', async () => {
-    const studioDir = path.join(tmpRoot, 'lock-studio');
+  it('7. cleanBackend serializes with .setup.lock and stopBackend rejects foreign listeners', async () => {
     const webDir = path.join(tmpRoot, 'lock-web');
-    await configureStudio(studioDir);
-    fs.mkdirSync(path.join(studioDir, 'package'), { recursive: true });
-    fs.writeFileSync(path.join(studioDir, 'package', process.platform === 'win32' ? 'aistudio2api.exe' : 'aistudio2api'), 'bin');
 
     fs.mkdirSync(path.join(webDir, 'bin'), { recursive: true });
     fs.writeFileSync(path.join(webDir, 'bin', process.platform === 'win32' ? 'gemini-web2api-go.exe' : 'gemini-web2api-go'), 'bin');
     fs.writeFileSync(path.join(webDir, 'config.json'), JSON.stringify({ host: '127.0.0.1', port: await freePort() }));
     fs.writeFileSync(path.join(webDir, 'secrets.json'), JSON.stringify({ apiKey: 'gw_lock', adminToken: 'adm_lock' }));
 
-    // Hold .setup.lock briefly and verify cleanStudio / cleanBackend wait for release
-    const studioLock = path.join(studioDir, '.setup.lock');
     const webLock = path.join(webDir, '.setup.lock');
-    fs.writeFileSync(studioLock, `${process.pid}\n${Date.now()}\ntoken\n`, { mode: 0o600 });
     fs.writeFileSync(webLock, `${process.pid}\n${Date.now()}\n`, { mode: 0o600 });
 
-    let studioCleaned = false;
     let webCleaned = false;
-    const pStudio = cleanStudio({ dataDir: studioDir }).then(() => { studioCleaned = true; });
     const pWeb = cleanBackend({ dataDir: webDir }).then(() => { webCleaned = true; });
 
     await sleep(150);
-    assert.equal(studioCleaned, false, 'cleanStudio must wait while .setup.lock is held');
     assert.equal(webCleaned, false, 'cleanBackend must wait while .setup.lock is held');
 
-    fs.rmSync(studioLock, { force: true });
     fs.rmSync(webLock, { force: true });
-    await Promise.all([pStudio, pWeb]);
-    assert.equal(studioCleaned, true);
+    await pWeb;
     assert.equal(webCleaned, true);
 
     // stopBackend rejects foreign listener (HTTP 401 on /v1/models)

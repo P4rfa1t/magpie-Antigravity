@@ -7,7 +7,7 @@ const command = process.argv[2];
 const args = process.argv.slice(3);
 const dataArg = args.find(arg => arg.startsWith('--data-dir='));
 const dataValue = dataArg ? dataArg.slice('--data-dir='.length) : '';
-// A relative --data-dir is taken from where the command runs, as for scripts/studio.mjs.
+// A relative --data-dir is resolved against the current working directory.
 const options = dataValue ? { dataDir: path.resolve(dataValue) } : {};
 
 async function main() {

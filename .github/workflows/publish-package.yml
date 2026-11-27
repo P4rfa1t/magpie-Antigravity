@@ -103,8 +103,7 @@ jobs:
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           assert.equal(`v${pkg.version}`, tag, `package.json version (${pkg.version}) does not match tag ${tag}`);
 
-          // Gemini Web still requires published pinned artifacts. AI Studio resolves official
-          // releases at first install; all five official integration jobs above must pass for this commit.
+          // Gemini Web requires published pinned backend artifacts; verify matrix jobs above must pass for this commit.
           const backendRelease = JSON.parse(fs.readFileSync('lib/backend-release.json', 'utf8'));
           for (const [key, pin] of Object.entries(backendRelease.binaries)) {
             const url = `https://github.com/${backendRelease.repository}/releases/download/${backendRelease.tag}/${pin.asset}`;

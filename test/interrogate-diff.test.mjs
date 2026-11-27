@@ -66,46 +66,46 @@ describe('Diff interrogation and subsystem verification planner', () => {
     ].join('\n');
 
     const analysis = analyzeDiff({
-      files: ['lib/proc.mjs', 'lib/studio-updates.mjs', 'index.mjs', 'test/zombie.test.mjs'],
+      files: ['lib/proc.mjs', 'lib/antigravity.mjs', 'lib/antigravity-ua.mjs', 'index.mjs', 'test/zombie.test.mjs'],
       patch
     });
 
     assert.ok(analysis.subsystems.includes('proc-liveness'));
-    assert.ok(analysis.subsystems.includes('studio-updates-lock'));
-    assert.ok(analysis.subsystems.includes('studio-runtime'));
+    assert.ok(analysis.subsystems.includes('antigravity'));
+    assert.ok(analysis.subsystems.includes('antigravity-ua'));
+    assert.ok(analysis.subsystems.includes('plugin-entry'));
     assert.ok(analysis.testFiles.includes('test/zombie.test.mjs'));
-    assert.ok(analysis.testFiles.includes('test/studio-lock-model.test.mjs'));
-    assert.ok(analysis.testFiles.includes('test/studio-connect.test.mjs'));
-    assert.ok(analysis.testFiles.includes('test/studio-connect-legacy.test.mjs'));
+    assert.ok(analysis.testFiles.includes('test/antigravity.test.mjs'));
+    assert.ok(analysis.testFiles.includes('test/antigravity-ua.test.mjs'));
+    assert.ok(analysis.testFiles.includes('test/backend.test.mjs'));
+    assert.ok(analysis.testFiles.includes('test/cleanup.test.mjs'));
 
-    const studioExtra = analyzeDiff({
-      files: ['lib/studio.mjs', 'lib/studio-page.mjs', 'lib/native.mjs', 'lib/setup.mjs', 'lib/cite.mjs', 'lib/studio-connect.mjs'],
+    const extra = analyzeDiff({
+      files: ['lib/native.mjs', 'lib/setup.mjs', 'lib/cite.mjs', 'lib/usage.mjs', 'scripts/sync-antigravity-protocol.mjs'],
       patch: [
         'diff --git a/lib/cite.mjs b/lib/cite.mjs',
         '--- a/lib/cite.mjs',
         '+++ b/lib/cite.mjs',
         '@@ -1,0 +2,1 @@',
-        '+++++fetch("http://localhost");'
+        '+fetch("http://localhost");'
       ].join('\n')
     });
     for (const expectedTest of [
-      'test/studio.test.mjs',
-      'test/studio-page.test.mjs',
       'test/native.test.mjs',
       'test/setup.test.mjs',
       'test/cite.test.mjs',
-      'test/studio-connect.test.mjs',
-      'test/studio-connect-legacy.test.mjs'
+      'test/usage.test.mjs',
+      'test/antigravity.test.mjs',
+      'test/antigravity-ua.test.mjs'
     ]) {
-      assert.ok(studioExtra.testFiles.includes(expectedTest), `missing ${expectedTest}`);
+      assert.ok(extra.testFiles.includes(expectedTest), `missing ${expectedTest}`);
     }
-    assert.equal(studioExtra.hazards['network-auth-proxy'], 1);
+    assert.equal(extra.hazards['network-auth-proxy'], 1);
 
     assert.equal(analysis.hazards['child-process'], 1);
     assert.equal(analysis.hazards['process-liveness'], 1);
     assert.equal(analysis.hazards['filesystem-lock-or-state'], 1);
     assert.equal(analysis.hazards['network-auth-proxy'], 1);
-    assert.ok(analysis.commands.some(c => c.optionalRuntime === 'bun'));
     assert.equal(analysis.commands[0].label, 'node scripts/check-guardrails.mjs');
     assert.equal(analysis.commands.at(-1).label, 'npm pack --dry-run');
 
@@ -132,19 +132,18 @@ describe('Diff interrogation and subsystem verification planner', () => {
     assert.equal(analysis.hazards['filesystem-lock-or-state'], 1);
   });
 
-  it('runs mapped commands via runVerificationPlan, tolerating missing optional bun and propagating real failures', () => {
+  it('runs mapped commands via runVerificationPlan, tolerating missing optional runtimes and propagating real failures', () => {
     const analysis = analyzeDiff({
-      files: ['lib/studio-native.mjs'],
+      files: ['lib/antigravity.mjs'],
       patch: '',
       filterExisting: false
     });
 
-    const skippedOk = runVerificationPlan(analysis, {
+    const ok = runVerificationPlan(analysis, {
       stdio: 'ignore',
-      spawnSyncFn: cmd => (cmd === 'bun' ? { error: Object.assign(new Error('not found'), { code: 'ENOENT' }), status: null } : { status: 0 })
+      spawnSyncFn: () => ({ status: 0 })
     });
-    assert.equal(skippedOk.ok, true);
-    assert.equal(skippedOk.results.find(r => r.label.startsWith('bun test')).status, 'skipped');
+    assert.equal(ok.ok, true);
 
     const failed = runVerificationPlan(analysis, {
       stdio: 'ignore',

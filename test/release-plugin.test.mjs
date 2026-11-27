@@ -23,7 +23,7 @@ function makeTempPkg(t, version = '0.14.1') {
   fs.writeFileSync(pkgPath, JSON.stringify({
     name: 'magpie-gemini-web',
     version,
-    repository: { type: 'git', url: 'git+https://github.com/BUKOWSKIREAL/magpie-gemini-web.git' }
+    repository: { type: 'git', url: 'git+https://github.com/P4rfa1t/magpie-gemini-web.git' }
   }));
   return { dir, pkgPath };
 }
@@ -40,10 +40,10 @@ function makeReleaseFixture({
   const pkgJson = JSON.stringify({
     name: 'magpie-gemini-web',
     version,
-    repository: { type: 'git', url: 'git+https://github.com/BUKOWSKIREAL/magpie-gemini-web.git' }
+    repository: { type: 'git', url: 'git+https://github.com/P4rfa1t/magpie-gemini-web.git' }
   });
   const backendReleaseJson = JSON.stringify({
-    repository: 'BUKOWSKIREAL/magpie-gemini-web',
+    repository: 'P4rfa1t/magpie-gemini-web',
     tag: 'backend-v4.28.0-magpie.1',
     binaries: {
       'darwin-arm64': { asset: 'gemini-web2api-go_darwin_arm64', sha256: 'a'.repeat(64) },
@@ -74,7 +74,7 @@ function makeReleaseFixture({
           isDraft: true,
           targetCommitish: commit,
           assets: [],
-          url: `https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/v${version}`
+          url: `https://github.com/P4rfa1t/magpie-gemini-web/releases/tag/v${version}`
         };
         return { status: 0, stdout: `${releaseState.url}\n`, stderr: '' };
       }
@@ -105,7 +105,7 @@ function makeReleaseFixture({
             createdAt: new Date(1000000).toISOString(),
             status: 'completed',
             conclusion: 'success',
-            url: `https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/${id}`
+            url: `https://github.com/P4rfa1t/magpie-gemini-web/actions/runs/${id}`
           }] : []),
           stderr: ''
         };
@@ -140,7 +140,7 @@ describe('verifyPublishedPackage', () => {
 
     const result = await verifyPublishedPackage({
       pkgPath,
-      repository: 'BUKOWSKIREAL/magpie-gemini-web',
+      repository: 'P4rfa1t/magpie-gemini-web',
       outDir,
       attempts: 5,
       retryMs: 0,
@@ -181,7 +181,7 @@ describe('verifyPublishedPackage', () => {
 
     await assert.rejects(verifyPublishedPackage({
       pkgPath,
-      repository: 'BUKOWSKIREAL/magpie-gemini-web',
+      repository: 'P4rfa1t/magpie-gemini-web',
       outDir: path.join(dir, 'out'),
       attempts: 3,
       retryMs: 0,
@@ -213,7 +213,7 @@ describe('verifyPublishedPackage', () => {
 
     await assert.rejects(verifyPublishedPackage({
       pkgPath,
-      repository: 'BUKOWSKIREAL/magpie-gemini-web',
+      repository: 'P4rfa1t/magpie-gemini-web',
       outDir: path.join(dir, 'out'),
       attempts: 2,
       retryMs: 0,
@@ -244,7 +244,7 @@ describe('verifyPublishedPackage', () => {
 
     await assert.rejects(verifyPublishedPackage({
       pkgPath,
-      repository: 'BUKOWSKIREAL/magpie-gemini-web',
+      repository: 'P4rfa1t/magpie-gemini-web',
       outDir: path.join(dir, 'out'),
       attempts: 3,
       retryMs: 0,
@@ -304,8 +304,8 @@ describe('releasePlugin orchestrator', () => {
 
     assert.equal(res.ok, true);
     assert.equal(res.tag, 'v0.14.1');
-    assert.equal(res.publishRunUrl, 'https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/1001');
-    assert.equal(res.verifyRunUrl, 'https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/2002');
+    assert.equal(res.publishRunUrl, 'https://github.com/P4rfa1t/magpie-gemini-web/actions/runs/1001');
+    assert.equal(res.verifyRunUrl, 'https://github.com/P4rfa1t/magpie-gemini-web/actions/runs/2002');
     assert.deepEqual(res.steps.map(s => [s.action, s.status]), [
       ['create-draft-release', 'completed'],
       ['publish-package', 'completed'],
@@ -322,7 +322,7 @@ describe('releasePlugin orchestrator', () => {
         isDraft: true,
         targetCommitish: SHA_HEAD,
         assets: [{ name: 'magpie-gemini-web-0.14.1.tgz', state: 'uploaded' }],
-        url: 'https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/v0.14.1'
+        url: 'https://github.com/P4rfa1t/magpie-gemini-web/releases/tag/v0.14.1'
       }
     });
 
@@ -344,7 +344,7 @@ describe('releasePlugin orchestrator', () => {
     ]);
     const dispatched = fixture.calls.filter(c => c[0] === 'gh' && c[1] === 'workflow' && c[2] === 'run');
     assert.deepEqual(dispatched, [
-      ['gh', 'workflow', 'run', 'verify-package.yml', '--repo', 'BUKOWSKIREAL/magpie-gemini-web', '-f', 'ref=v0.14.1']
+      ['gh', 'workflow', 'run', 'verify-package.yml', '--repo', 'P4rfa1t/magpie-gemini-web', '-f', 'ref=v0.14.1']
     ]);
   });
 
@@ -360,8 +360,8 @@ describe('releasePlugin orchestrator', () => {
       log: () => {}
     });
     assert.equal(res.ok, true);
-    assert.equal(res.publishRunUrl, 'https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/1001');
-    assert.equal(res.verifyRunUrl, 'https://github.com/BUKOWSKIREAL/magpie-gemini-web/actions/runs/2002');
+    assert.equal(res.publishRunUrl, 'https://github.com/P4rfa1t/magpie-gemini-web/actions/runs/1001');
+    assert.equal(res.verifyRunUrl, 'https://github.com/P4rfa1t/magpie-gemini-web/actions/runs/2002');
   });
 
   it('aborts before triggering workflows when existing release points to a different commit SHA', async () => {
@@ -370,7 +370,7 @@ describe('releasePlugin orchestrator', () => {
         isDraft: true,
         targetCommitish: '0'.repeat(40),
         assets: [],
-        url: 'https://github.com/BUKOWSKIREAL/magpie-gemini-web/releases/tag/v0.14.1'
+        url: 'https://github.com/P4rfa1t/magpie-gemini-web/releases/tag/v0.14.1'
       }
     });
 

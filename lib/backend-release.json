@@ -1,6 +1,6 @@
 {
   "version": "4.31.0-magpie.2",
-  "repository": "BUKOWSKIREAL/magpie-gemini-web",
+  "repository": "P4rfa1t/magpie-gemini-web",
   "tag": "backend-v4.31.0-magpie.2",
   "upstream": {
     "repository": "https://github.com/zexadev/gemini-web2api-go.git",

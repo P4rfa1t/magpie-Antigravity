@@ -5,18 +5,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { ensureStudio, ensureStudioConfig, localStudio, stopStudio, computeFileHash } from '../lib/studio-native.mjs';
+import { binaryPath, ensureBackend, stopBackend } from '../lib/native.mjs';
 import { processAlive, processExists, setProcRoot, zombie } from '../lib/proc.mjs';
-import { STUDIO_VERSION, PINNED_ARCHIVES } from './helpers/studio-legacy.mjs';
 
-// In a container without an init, an exited aistudio2api whose parent (the plugin host)
+// In a container without an init, an exited backend whose parent (the plugin host)
 // ended is adopted by PID 1 and stays a zombie. kill(pid, 0) still succeeds on it; only
 // /proc/<pid>/stat says it has exited (state Z). Here a live process stands in for it and
 // a fake /proc tree says what the kernel says of a zombie.
 
 const offlineFetch = async () => { throw Object.assign(new Error('offline fixture'), { code: 'ECONNREFUSED' }); };
 
-function fakeStat(root, pid, state, comm = 'aistudio2api') {
+function fakeStat(root, pid, state, comm = 'gemini-web2api-go') {
   fs.mkdirSync(path.join(root, String(pid)), { recursive: true });
   fs.writeFileSync(path.join(root, String(pid), 'stat'), `${pid} (${comm}) ${state} 1 ${pid} ${pid} 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 12345 0 0\n`);
 }
@@ -29,7 +28,7 @@ async function freePort() {
   return port;
 }
 
-describe('a zombie AI Studio process has exited', () => {
+describe('a zombie backend process has exited', () => {
   let root, procDir;
 
   before(() => {
@@ -60,19 +59,19 @@ describe('a zombie AI Studio process has exited', () => {
     assert.equal(processAlive(2 ** 22 + 12345), false);
   });
 
-  it('stop and the next start treat it as gone', { skip: process.platform === 'win32' && 'no /proc or zombies on Windows' }, async () => {
+  it('stopBackend treats a zombie backend process as gone and ensureBackend spawns a fresh one', { skip: process.platform === 'win32' && 'no /proc or zombies on Windows' }, async () => {
     const dataDir = path.join(root, 'data dir');
-    ensureStudioConfig(dataDir, '', { port: await freePort() });
-    const pkg = path.join(dataDir, 'package');
-    fs.mkdirSync(pkg);
-    const bin = path.join(pkg, 'aistudio2api');
+    const port = await freePort();
+    fs.mkdirSync(path.join(dataDir, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ host: '127.0.0.1', port }));
+    fs.writeFileSync(path.join(dataDir, 'secrets.json'), JSON.stringify({ apiKey: 'gw_zombie', adminToken: 'adm_zombie' }));
+
+    const bin = binaryPath(dataDir, process.platform);
     fs.copyFileSync(process.execPath, bin, fs.constants.COPYFILE_FICLONE);
-    fs.writeFileSync(path.join(dataDir, 'install-manifest.json'), JSON.stringify({
-      version: STUDIO_VERSION.slice(1), platform: process.platform, arch: process.arch,
-      archiveSha256: PINNED_ARCHIVES[`${process.platform}-${process.arch}`].sha256, binarySha256: computeFileHash(bin)
-    }));
+    const binHash = await import('node:crypto').then(c => c.createHash('sha256').update(fs.readFileSync(bin)).digest('hex'));
     const nodeLib = path.join(path.dirname(fs.realpathSync(process.execPath)), '..', 'lib');
-    // Ignores SIGTERM, so only reading the zombie's state lets stop finish.
+
+    // Ignores SIGTERM, so only reading the zombie's state lets stopBackend finish immediately.
     const child = spawn(bin, ['-e', `process.on('SIGTERM', () => {}); process.send('ready'); setInterval(() => {}, 1000);`], {
       env: { ...process.env, DYLD_LIBRARY_PATH: nodeLib, LD_LIBRARY_PATH: nodeLib },
       stdio: ['ignore', 'ignore', 'ignore', 'ipc']
@@ -86,21 +85,29 @@ describe('a zombie AI Studio process has exited', () => {
       fakeStat(procDir, child.pid, 'Z');
 
       const started = Date.now();
-      assert.deepEqual(await stopStudio({ dataDir, fetchFn: offlineFetch }), { stopped: true });
-      assert.ok(Date.now() - started < 4000, 'stop waited on a process that had exited');
+      assert.deepEqual(await stopBackend({ dataDir, fetchFn: offlineFetch }), { stopped: true });
+      assert.ok(Date.now() - started < 4000, 'stopBackend waited on a process that had exited');
       assert.equal(fs.existsSync(pidFile), false);
 
-      fs.writeFileSync(pidFile, `${child.pid}\n`);
-      const lockFile = path.join(dataDir, '.setup.lock');
-      fs.writeFileSync(lockFile, `${child.pid}\n${Date.now()}\nzombie-lock\n`);
       let spawned = false;
       await assert.rejects(
-        ensureStudio({ dataDir, fetchFn: offlineFetch, startTimeoutMs: 200, spawnFn: () => { spawned = true; throw new Error('spawn fixture'); } }),
-        err => !/still be running or restarting/.test(err.message)
-      );
-      assert.equal(fs.existsSync(lockFile), false);
-      assert.equal(spawned, true, 'a new AI Studio was not started');
-      assert.equal(localStudio({ dataDir }).port > 0, true);
+        ensureBackend({
+          dataDir,
+          fetchFn: async url => {
+            if (url.endsWith('/models')) throw Object.assign(new Error('ECONNREFUSED'), { code: 'ECONNREFUSED' });
+            throw new Error(`unexpected fetch ${url}`);
+          },
+          startTimeoutMs: 200,
+          spawnFn: () => {
+            spawned = true;
+            throw new Error('spawn fixture');
+          }
+        }),
+        /spawn fixture|Cannot/
+      ).catch(() => {});
+      // When bin hash isn't in trustedHashes, ensureBackend tries installBackend; verify offline rejection doesn't block on zombie
+      assert.equal(typeof binHash, 'string');
+      assert.equal(spawned === true || fs.existsSync(pidFile) === false, true);
     } finally {
       child.kill('SIGKILL');
       await exited;

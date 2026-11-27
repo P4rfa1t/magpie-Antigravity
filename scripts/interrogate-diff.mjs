@@ -12,12 +12,12 @@ const HAZARD_RULES = [
   },
   {
     category: 'process-liveness',
-    pattern: /\b(?:process\.kill|processAlive|processExists|zombie|setProcRoot|studioProcessStarted)\b/,
+    pattern: /\b(?:process\.kill|processAlive|processExists|zombie|setProcRoot|verifyProcessIdentity|processPids|listenerPids)\b/,
     question: 'Are Linux Z/X zombies and OS PID reuse handled without raw kill-zero probes (`lib/proc.mjs`), and are permissions errors (`EPERM`) distinguished from `ESRCH`?'
   },
   {
     category: 'filesystem-lock-or-state',
-    pattern: /\b(?:writeFileSync|rmSync|unlinkSync|renameSync)\b|\.lock\b|\.studio-use\./,
+    pattern: /\b(?:writeFileSync|rmSync|unlinkSync|renameSync)\b|\.lock\b/,
     question: 'Do lock/state writes use atomic/exclusive staging or unique per-owner claims with write-then-recheck fencing and content-checked stale cleanup?'
   },
   {
@@ -186,52 +186,39 @@ function mapFileToSubsystemsAndTests(file, state) {
     state.subsystems.add('proc-liveness');
     state.tests.add('test/zombie.test.mjs');
     state.tests.add('test/backend.test.mjs');
-    state.tests.add('test/studio-lock-model.test.mjs');
-    state.tests.add('test/studio-docker.test.mjs');
+    state.tests.add('test/cleanup.test.mjs');
   }
-  if (file === 'lib/studio-updates.mjs' || file.startsWith('docs/models/')) {
-    state.subsystems.add('studio-updates-lock');
-    state.tests.add('test/studio-updates.test.mjs');
-    state.tests.add('test/studio-update-outcomes.test.mjs');
-    state.tests.add('test/studio-lock-model.test.mjs');
+  if (file === 'index.mjs') {
+    state.subsystems.add('plugin-entry');
+    state.tests.add('test/backend.test.mjs');
+    state.tests.add('test/antigravity.test.mjs');
+    state.tests.add('test/task.test.mjs');
   }
-  if (file === 'lib/studio-upstream.mjs') {
-    state.subsystems.add('studio-upstream');
-    state.tests.add('test/studio-official.test.mjs');
-    state.tests.add('test/studio-pins.test.mjs');
-    state.tests.add('test/studio-updates.test.mjs');
+  if (
+    file === 'lib/antigravity.mjs' ||
+    file === 'lib/antigravity-mapper.mjs' ||
+    file === 'lib/antigravity-oauth.mjs' ||
+    file === 'lib/antigravity-protocol.json' ||
+    file === 'scripts/antigravity.mjs' ||
+    file === 'scripts/sync-antigravity-protocol.mjs'
+  ) {
+    state.subsystems.add('antigravity');
+    state.tests.add('test/antigravity.test.mjs');
+    state.tests.add('test/antigravity-ua.test.mjs');
   }
-  if (file === 'lib/studio-native.mjs' || file === 'index.mjs' || /^scripts\/studio.*\.mjs$/.test(file)) {
-    state.subsystems.add('studio-runtime');
-    state.tests.add('test/studio-native.test.mjs');
-    state.tests.add('test/studio-official.test.mjs');
-    state.tests.add('test/studio-connect.test.mjs');
-    state.tests.add('test/studio-connect-legacy.test.mjs');
-    state.tests.add('test/studio-updates.test.mjs');
-    state.tests.add('test/studio-lock-model.test.mjs');
-    state.tests.add('test/studio-docker.test.mjs');
-    state.tests.add('test/studio.test.mjs');
-    state.tests.add('test/studio-page.test.mjs');
-  }
-  if (file === 'lib/studio.mjs') {
-    state.subsystems.add('studio-web');
-    state.tests.add('test/studio.test.mjs');
-    state.tests.add('test/studio-migration.test.mjs');
-    state.tests.add('test/studio-user-backend.test.mjs');
-  }
-  if (file === 'lib/studio-page.mjs') {
-    state.subsystems.add('studio-ui');
-    state.tests.add('test/studio-page.test.mjs');
-    state.tests.add('test/studio.test.mjs');
-  }
-  if (file === 'lib/studio-connect.mjs' || file === 'lib/studio-connect-legacy.mjs') {
-    state.subsystems.add('studio-connect');
-    state.tests.add('test/studio-connect.test.mjs');
-    state.tests.add('test/studio-connect-legacy.test.mjs');
+  if (
+    file === 'lib/antigravity-ua.mjs' ||
+    file === 'lib/antigravity-ua.json' ||
+    file === '.github/workflows/antigravity-ua-sync.yml'
+  ) {
+    state.subsystems.add('antigravity-ua');
+    state.tests.add('test/antigravity-ua.test.mjs');
+    state.tests.add('test/antigravity.test.mjs');
   }
   if (file === 'lib/native.mjs') {
     state.subsystems.add('native-plugin');
     state.tests.add('test/native.test.mjs');
+    state.tests.add('test/zombie.test.mjs');
   }
   if (file === 'lib/setup.mjs') {
     state.subsystems.add('setup');
@@ -241,10 +228,7 @@ function mapFileToSubsystemsAndTests(file, state) {
     state.subsystems.add('cite');
     state.tests.add('test/cite.test.mjs');
   }
-  if (file === 'index.mjs' || file === 'lib/studio-native.mjs' || file.startsWith('lib/studio-connect') || /^scripts\/studio.*\.mjs$/.test(file) || /^test\/studio-connect.*\.test\.mjs$/.test(file)) {
-    state.needsBunStudioConnect = true;
-  }
-  if (/^lib\/backend.*\.mjs$/.test(file) || /^scripts\/backend.*\.mjs$/.test(file)) {
+  if (/^lib\/backend.*\.mjs$/.test(file) || /^scripts\/backend.*\.mjs$/.test(file) || file === 'lib/backend-release.json') {
     state.subsystems.add('backend');
     state.tests.add('test/backend.test.mjs');
     state.tests.add('test/backend-release.test.mjs');
@@ -339,8 +323,7 @@ export function analyzeDiff({ files = [], patch = '', cwd = process.cwd(), filte
   const normalizedFiles = uniqueSorted(files.map(toPosix));
   const state = {
     subsystems: new Set(),
-    tests: new Set(),
-    needsBunStudioConnect: false
+    tests: new Set()
   };
 
   for (const file of normalizedFiles) {
@@ -367,20 +350,6 @@ export function analyzeDiff({ files = [], patch = '', cwd = process.cwd(), filte
       label: `node --test ${testFiles.join(' ')}`,
       command: process.execPath,
       args: ['--test', ...testFiles]
-    });
-  }
-
-  if (state.needsBunStudioConnect) {
-    let bunTests = ['test/studio-connect.test.mjs', 'test/studio-connect-legacy.test.mjs'];
-    if (filterExisting) {
-      const existingBunTests = bunTests.filter(rel => fs.existsSync(path.join(cwd, rel)));
-      if (existingBunTests.length > 0) bunTests = existingBunTests;
-    }
-    commands.push({
-      label: `bun test ${bunTests.join(' ')} --timeout 15000`,
-      command: 'bun',
-      args: ['test', ...bunTests, '--timeout', '15000'],
-      optionalRuntime: 'bun'
     });
   }
 

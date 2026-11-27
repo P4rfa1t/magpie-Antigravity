@@ -5,7 +5,7 @@ import zlib from 'node:zlib';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { GeminiWebPlugin, AIStudioPlugin } from '../index.mjs';
+import { GeminiWebPlugin, AntigravityPlugin } from '../index.mjs';
 import {
   DEFAULT_BASE,
   PLUGIN_ICON,
@@ -18,8 +18,11 @@ import {
 
 // The plugin starts the backend it manages in the data dir; keep tests away from the real one.
 process.env.GEMINI_WEB_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-gemini-web-test-'));
-process.env.AI_STUDIO_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-studio-icon-test-'));
-after(() => fs.rmSync(process.env.AI_STUDIO_DATA_DIR, { recursive: true, force: true }));
+process.env.ANTIGRAVITY_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'magpie-antigravity-icon-test-'));
+after(() => {
+  fs.rmSync(process.env.GEMINI_WEB_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(process.env.ANTIGRAVITY_DATA_DIR, { recursive: true, force: true });
+});
 
 describe('1. URL normalization/root/subpath/HTTPS/local IPv6', () => {
   it('normalizes root path to /v1', () => {
@@ -1081,18 +1084,18 @@ describe('23. Plugin metadata for Magpie', () => {
     assert.match(svg, /^<svg\b[^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"[^>]*>[\s\S]*<\/svg>$/);
 
     const web = await GeminiWebPlugin();
-    const studio = await AIStudioPlugin();
+    const antigravity = await AntigravityPlugin();
     assert.equal(web.auth.icon, PLUGIN_ICON);
-    assert.equal(studio.auth.icon, PLUGIN_ICON);
+    assert.equal(antigravity.auth.icon, PLUGIN_ICON);
   });
 
-  it('lets each Gemini Web sign-in take two requests at once and AI Studio one', async () => {
+  it('declares maxConcurrency of 2 for both Gemini Web and Antigravity (RT)', async () => {
     const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
     assert.equal(pkg.magpie?.maxConcurrency, 2);
 
     const web = await GeminiWebPlugin();
-    const studio = await AIStudioPlugin();
+    const antigravity = await AntigravityPlugin();
     assert.equal(web.auth.maxConcurrency, 2);
-    assert.equal(studio.auth.maxConcurrency, 1);
+    assert.equal(antigravity.auth.maxConcurrency, 2);
   });
 });

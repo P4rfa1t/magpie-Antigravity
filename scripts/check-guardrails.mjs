@@ -706,7 +706,7 @@ export function checkGuardrails({ rootDir = REPO_ROOT } = {}) {
     }
 
     const shippedSet = new Set();
-    const forbiddenEntry = /(?:^|\/)(?:\.env|.*secret.*|.*\.db|backend-build|studio-build)(?:$|\/)/i;
+    const forbiddenEntry = /(?:^|\/)(?:\.env|.*secret.*|.*\.db|backend-build)(?:$|\/)/i;
     for (const entry of pkg.files || []) {
       const normalized = toPosix(entry).replace(/^\.\//, '');
       const abs = path.join(root, normalized);

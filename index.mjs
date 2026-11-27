@@ -287,6 +287,5 @@ export const GeminiWebPlugin = async (_input, options = {}) => {
   };
 };
 
-export { AIStudioPlugin } from './lib/studio.mjs';
 export { AntigravityPlugin } from './lib/antigravity.mjs';
 export default GeminiWebPlugin;
