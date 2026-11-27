@@ -2,7 +2,10 @@ name: Sync Antigravity UA and Protocol
 
 on:
   schedule:
+    # Staggered ~8h off-peak UTC slots (12:23, 20:17, 04:41 UTC+8) so GitHub cron drops/delays do not skip a whole day
     - cron: '23 4 * * *'
+    - cron: '17 12 * * *'
+    - cron: '41 20 * * *'
   workflow_dispatch:
     inputs:
       force:
@@ -13,6 +16,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: sync-antigravity
+  cancel-in-progress: false
 
 jobs:
   sync-antigravity:
