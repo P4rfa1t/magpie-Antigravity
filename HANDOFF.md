@@ -79,10 +79,11 @@ npm run interrogate -- --run                                 # 执行护栏 + �
 1. **成对 UA 解析与防 Franken-UA 不变量 (`lib/antigravity-ua.mjs`, `lib/antigravity-ua.json`)**：
    - 解析优先级：成对环境变量（必须同时设置 `ANTIGRAVITY_HUB_VERSION` 与 `ANTIGRAVITY_HUB_CL`）> `${dataDir}/hub-version.json` 原子缓存（`0o700`/`0o600`）> 远端清单热同步（默认拉取 `P4rfa1t/magpie-Antigravity` 的 `lib/antigravity-ua.json`）> 内置基线（当前清单：`2.36.0` / `cl=1031268331` / `oauthUserAgent="vscode/1.107.0 (Antigravity/2.8.0)"`，源码常数兜底 `2.35.1` / `1029194470`）。
    - `syncHubVersionFromOfficial` 采用**单遍流式 tar 解析**同时提取 Hub `(version, cl)`、`oauthUserAgent` 并缓存 `language_server` 二进制供后续协议探测复用（无需二次下载归档）。
-2. **零凭据线协议自动同步与漂移告警 (`scripts/sync-antigravity-protocol.mjs`, `lib/antigravity-protocol.json`, `.github/workflows/antigravity-ua-sync.yml`)**：
-   - 使用本地 mock HTTPS/HTTP 服务器驱动官方 `language_server` 启动探针（零 Google 凭据），提取真实请求头顺序、Envelope 拓扑、身份行及二进制静态信号（有序 `observedEndpoints` / `binarySignals.endpoints` / `oauthScopes`）。
-   - `.github/workflows/antigravity-ua-sync.yml` 配置每日 3 个错峰 UTC 定时槽（`23 4 * * *`、`17 12 * * *`、`41 20 * * *`）与并发组 `sync-antigravity`（`cancel-in-progress: false`），更新前执行 `npm run check`、身份字符串一致性测试及协议对齐测试，失败时自动在 GitHub Issues 创建/评论漂移告警。
-3. **Envelope 拓扑与系统提示词侧载 (`lib/antigravity-mapper.mjs`)**：
+2. **零凭据线协议自动同步与软告警兜底 (`scripts/sync-antigravity-protocol.mjs`, `lib/antigravity-protocol.json`, `.github/workflows/antigravity-ua-sync.yml`)**：
+   - 使用本地 mock HTTPS/HTTP 服务器驱动官方 `language_server` 启动探针（零 Google 凭据），提取真实请求头顺序、Envelope 拓扑、身份行、静态枚举标签（`staticLabels`）及二进制静态信号（有序 `observedEndpoints` / `binarySignals.endpoints` / `oauthScopes`）。
+   - `.github/workflows/antigravity-ua-sync.yml` 配置每日 3 个错峰 UTC 定时槽（`23 4 * * *`、`17 12 * * *`、`41 20 * * *`）与并发组 `sync-antigravity`（`cancel-in-progress: false`），并启用 `continue-on-error: true` 软告警模式：更新前执行 `npm run check`、身份字符串一致性测试及协议对齐测试，通过则自动提交推送；若遇破坏性结构漂移或拉取异常，则**跳过推送以防 UA/请求体不匹配**、自动建/评 Issue 并输出 `::warning::`，工作流自身保持绿色。
+3. **Envelope 拓扑、自适应协议读取与系统提示词侧载 (`lib/antigravity-mapper.mjs`)**：
+   - `OFFICIAL_ANTIGRAVITY_IDENTITY`、`BUNDLED_USER_AGENT_FIELD` 与 `BUNDLED_STATIC_LABELS`（通过 `buildOfficialLabels` 合并静态标签且不覆盖动态键）均直接从 `lib/antigravity-protocol.json` 自动适配读取（缺失时回退内置常数），官方新增静态标签或微调身份行时无需手动改代码即可自动过测推送。
    - 外层 Envelope 严格保持 `['project', 'requestId', 'request', 'model', 'userAgent', 'requestType']`；`innerRequest` 键序固定为 `contents -> systemInstruction -> tools -> toolConfig -> labels -> generationConfig -> sessionId`。
    - `tools` 打包进单个 `[{ functionDeclarations }]`；`requestId` 为 `agent/<convUuid>/<ts>/<trajectoryUuid>/<step>`，其中 `step = contents.length`、`labels.last_step_index = contents.length - 1`、`labels.request_id = <trajectory_id>-<已完成 model 回合数>`，同会话同一账号复用 `trajectory_id`（多号 failover 严格按账号隔离）。
    - 第三方长指令或 Agent 提示词通过侧载进入 `contents[0].parts[0]` 的 `<instructions>...</instructions>`，而 `innerRequest.systemInstruction` 仅保留官方 `OFFICIAL_ANTIGRAVITY_IDENTITY`；`buildCloakLineRe` 在代码块外（`transformOutsideCodeBlocks`）穿透零宽字符改写 Claude Code / Codex / OpenCode / Hermes / pi / RFC 2119 等敏感特征句。

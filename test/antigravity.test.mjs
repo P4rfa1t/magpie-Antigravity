@@ -39,6 +39,7 @@ import {
   SENTINEL_SIGNATURE,
   antigravitySSEToOpenAIStream,
   antigravityToOpenAIResponse,
+  buildOfficialLabels,
   buildSilenceBoundaryText,
   cleanJsonSchema,
   deriveConversationAnchor,
@@ -500,18 +501,39 @@ describe('Antigravity OpenAI <-> v1internal mapping', () => {
     assert.equal(envelope.request.labels.root_cascade_id, envelope.requestId.split('/')[1]);
     assert.equal(envelope.request.labels.trajectory_id, envelope.requestId.split('/')[3]);
     assert.equal(envelope.request.labels.trajectory_source, 'CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT');
-    assert.deepEqual(Object.keys(envelope.request.labels), [
+    const expectedManifestLabelKeys = [
       'cascade_id',
       'last_step_index',
       'model_enum',
       'request_id',
       'root_cascade_id',
       'trajectory_id',
-      'trajectory_source',
       'used_claude',
       'used_claude_conservative',
-      'used_non_gemini_model'
-    ]);
+      'used_non_gemini_model',
+      ...Object.keys(
+        JSON.parse(fs.readFileSync(new URL('../lib/antigravity-protocol.json', import.meta.url), 'utf8'))
+          ?.streamGenerateContent?.staticLabels || {}
+      )
+    ];
+    assert.deepEqual(
+      Object.keys(envelope.request.labels),
+      [...new Set(expectedManifestLabelKeys)].sort()
+    );
+    const autoAdaptedLabels = buildOfficialLabels({
+      requestId: envelope.requestId,
+      contents: envelope.request.contents,
+      targetModel: 'gemini-4-hydrogen',
+      modelInfo: { model: 'MODEL_PLACEHOLDER_M522' },
+      staticLabels: {
+        trajectory_source: 'CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT',
+        client_surface: 'ANTIGRAVITY_HUB',
+        cascade_id: 'should-not-override-dynamic'
+      }
+    });
+    assert.equal(autoAdaptedLabels.client_surface, 'ANTIGRAVITY_HUB');
+    assert.equal(autoAdaptedLabels.cascade_id, envelope.request.labels.cascade_id);
+    assert.deepEqual(Object.keys(autoAdaptedLabels), Object.keys(autoAdaptedLabels).sort());
     assert.deepEqual(Object.keys(envelope), ['project', 'requestId', 'request', 'model', 'userAgent', 'requestType']);
   });
   it('rewords invisible-char obfuscated turned-away phrases and quality-degrading paragraphs', () => {

@@ -72,6 +72,9 @@
       "used_claude_conservative",
       "used_non_gemini_model"
     ],
+    "staticLabels": {
+      "trajectory_source": "CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT"
+    },
     "generationConfigKeys": [
       "maxOutputTokens",
       "thinkingConfig"
@@ -172,5 +175,5 @@
     "hasStreamQueryAltSse": true
   },
   "source": "official-sync",
-  "updatedAt": 1795805766498
+  "updatedAt": 1795809933256
 }

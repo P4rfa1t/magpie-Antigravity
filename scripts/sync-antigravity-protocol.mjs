@@ -26,6 +26,21 @@ const V1_INTERNAL_ENDPOINT_RE = /\/v1internal:[a-z][A-Za-z0-9]{2,64}/g;
 const ENDPOINT_BLEED_RE = /(?:url|chunk|crypto|failed|The|[A-Z])$/;
 const GOOGLE_AUTH_SCOPE_RE =
   /https:\/\/www\.googleapis\.com\/auth\/(?:userinfo\.(?:email|profile)|experimentsandconfigs|cloud-platform|cclog|aicode|drive(?:\.(?:file|appdata|scripts|metadata\.readonly|metadata|apps\.readonly|meet\.readonly|photos\.readonly|readonly))?)/g;
+const DYNAMIC_LABEL_KEYS = new Set([
+  'cascade_id',
+  'last_execution_id',
+  'last_step_index',
+  'model_enum',
+  'request_id',
+  'root_cascade_id',
+  'trajectory_id',
+  'used_claude',
+  'used_claude_conservative',
+  'used_non_gemini_model'
+]);
+const SAFE_STATIC_LABEL_KEY_RE = /^[a-z][a-z0-9_]{0,63}$/;
+const UUID_LIKE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-\d+)?$/i;
+const INVALID_STATIC_LABEL_VALUE = Symbol('invalid-static-label-value');
 
 function normalizePosixPlatform(uaString) {
   return String(uaString || '')
@@ -146,6 +161,9 @@ export function summarizeCapturedExchanges(exchanges, staticSignals = {}, meta =
   let egressAcceptEncoding = null;
   let egressContentType = null;
   let egressUserAgentTemplate = null;
+  let agentLabelSamples = 0;
+  const labelOccurrences = new Map();
+  const labelValues = new Map();
 
   for (const ex of exchanges || []) {
     const endpointKey = `${ex.method} ${ex.url}`;
@@ -205,7 +223,24 @@ export function summarizeCapturedExchanges(exchanges, staticSignals = {}, meta =
             streamMeta.sessionIdFormat = /^-?\d+$/.test(reqObj.sessionId) ? 'signed_int64_string' : 'string';
           }
           if (reqObj.labels && typeof reqObj.labels === 'object') {
-            for (const k of Object.keys(reqObj.labels)) streamMeta.labelKeys.add(k);
+            const isAgentSample = parsed.requestType === 'agent';
+            if (isAgentSample) agentLabelSamples += 1;
+            for (const [k, v] of Object.entries(reqObj.labels)) {
+              streamMeta.labelKeys.add(k);
+              if (isAgentSample && !DYNAMIC_LABEL_KEYS.has(k) && SAFE_STATIC_LABEL_KEY_RE.test(k)) {
+                labelOccurrences.set(k, (labelOccurrences.get(k) || 0) + 1);
+                let bucket = labelValues.get(k);
+                if (!bucket) {
+                  bucket = new Set();
+                  labelValues.set(k, bucket);
+                }
+                if (typeof v === 'string' && v.length > 0 && v.length <= 128 && !UUID_LIKE_RE.test(v) && !/@/.test(v) && !/^\d+$/.test(v)) {
+                  bucket.add(v);
+                } else {
+                  bucket.add(INVALID_STATIC_LABEL_VALUE);
+                }
+              }
+            }
           }
           if (reqObj.generationConfig && typeof reqObj.generationConfig === 'object') {
             for (const k of Object.keys(reqObj.generationConfig)) streamMeta.generationConfigKeys.add(k);
@@ -225,6 +260,16 @@ export function summarizeCapturedExchanges(exchanges, staticSignals = {}, meta =
             }
           }
         }
+      }
+    }
+  }
+
+  const staticLabels = {};
+  if (agentLabelSamples > 0) {
+    for (const [k, vals] of [...labelValues.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      if (labelOccurrences.get(k) === agentLabelSamples && vals.size === 1) {
+        const [onlyVal] = vals;
+        if (typeof onlyVal === 'string') staticLabels[k] = onlyVal;
       }
     }
   }
@@ -252,6 +297,7 @@ export function summarizeCapturedExchanges(exchanges, staticSignals = {}, meta =
       agentRequestKeys: streamMeta.agentRequestKeys,
       toolsPacking: streamMeta.toolsPacking || 'none',
       labelKeys: [...streamMeta.labelKeys].sort(),
+      ...(Object.keys(staticLabels).length > 0 ? { staticLabels } : {}),
       generationConfigKeys: [...streamMeta.generationConfigKeys].sort(),
       thinkingConfigKeys: [...streamMeta.thinkingConfigKeys].sort(),
       userAgentField: streamMeta.userAgentField || 'antigravity',

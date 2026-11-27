@@ -822,7 +822,14 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
               parts: [{ text: '<identity>\nYou are Antigravity, test identity line.\nMore details.' }]
             },
             tools: [{ functionDeclarations: [{ name: 'a' }, { name: 'b' }] }],
-            labels: { cascade_id: 'c', last_step_index: '0', root_cascade_id: 'c', trajectory_id: 't' },
+            labels: {
+              cascade_id: 'c',
+              client_surface: 'ANTIGRAVITY_HUB',
+              last_step_index: '0',
+              root_cascade_id: 'c',
+              trajectory_id: 't',
+              trajectory_source: 'CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT'
+            },
             generationConfig: { maxOutputTokens: 65536, thinkingConfig: { includeThoughts: true, thinkingLevel: 'HIGH' } },
             sessionId: '-123456'
           },
@@ -837,6 +844,10 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
     assert.equal(snapshot.headers.userAgentTemplate, 'antigravity/cli/2.35.2 (aidev_client; os_type=<os>; arch=<arch>; cl=1029311855)');
     assert.equal(snapshot.streamGenerateContent.toolsPacking, 'single_function_declarations_wrapper');
     assert.equal(snapshot.streamGenerateContent.systemIdentityLine, 'You are Antigravity, test identity line.');
+    assert.deepEqual(snapshot.streamGenerateContent.staticLabels, {
+      client_surface: 'ANTIGRAVITY_HUB',
+      trajectory_source: 'CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT'
+    });
     assert.deepEqual(snapshot.clientMetadata.loadCodeAssist, { ideType: 'ANTIGRAVITY' });
     assert.deepEqual(snapshot.observedEndpoints, [
       'POST /v1internal:loadCodeAssist',
@@ -874,5 +885,7 @@ describe('Remote manifest sync (Option B) & version convergence', () => {
     assert.match(workflowText, /scripts\/sync-antigravity-protocol\.mjs/);
     assert.match(workflowText, /issues:\s*write/);
     assert.match(workflowText, /\[Antigravity Sync\] Protocol drift detected/);
+    assert.match(workflowText, /continue-on-error:\s*true/);
+    assert.match(workflowText, /steps\.verify-before-push\.outcome\s*==\s*'success'/);
   });
 });
